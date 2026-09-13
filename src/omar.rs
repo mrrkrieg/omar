@@ -18,6 +18,7 @@ mod projects;
 // The generator runs under `cargo test`; nothing in a release build calls it.
 #[cfg(test)]
 mod protocol;
+mod reaction;
 mod scheduler;
 mod serve;
 mod stub_agent;
@@ -497,11 +498,13 @@ async fn async_main() -> Result<()> {
         }) => {
             let target = resolve_cli_ea(&omar_dir, cli.ea.as_deref())?;
             let bytecode = topology::load_program(&program)?;
+            let generated = topology::generated_dir(&program);
             topology::run_topology(
                 &bytecode,
                 topology::TopologyRunConfig {
                     ea_id: target.id,
                     omar_dir: &omar_dir,
+                    generated: &generated,
                     base_prefix: &config.dashboard.session_prefix,
                     default_workdir: &config.agent.default_workdir,
                     health_idle_warning: config.health.idle_warning,
@@ -848,6 +851,9 @@ fn status_deployment(omar_dir: &std::path::Path, ea_id: ea::EaId, team: &str) ->
         }
     }
     println!("  agents: {}", record.sessions.len());
+    for (name, value) in &record.state_vars {
+        println!("  state {name} = {value}");
+    }
     println!("  files: {}", dir.display());
     Ok(())
 }
