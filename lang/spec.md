@@ -14,27 +14,46 @@ AI is used only inside prompt reactions, never for orchestration.
 ## 2. Syntax
 
 ```ebnf
-program     = "team", identifier, "(", agents, ")",
+program     = { team }, main ;
+
+team        = "team", identifier, [ "(", [ params ], ")" ],
+                                  [ "[", [ agents ], "]" ],
               "{", { declaration }, "}" ;
+params      = param, { ",", param } ;
+param       = identifier, ":", type ;
+agents      = agent, { ",", agent } ;
+agent       = identifier, ":", backend ;
+backend     = identifier ;
 
-agents      = [ agent, { ",", agent } ] ;
-agent       = identifier, ":", identifier ;
+main        = "main", [ identifier ], "{", { instance | wiring }, "}" ;
+wiring      = qualified, "->", qualified, [ "after", delay ] ;
 
-declaration = input | output | action | timer | connection | prompt ;
+declaration = input | output | action | timer | state | instance
+            | connection | prompt | reaction | ";" ;
 input       = "input", identifier, ":", type ;
 output      = "output", identifier, ":", type ;
 action      = "action", identifier, [ "(", "delay", "=", delay, ")" ],
               [ ":", type ] ;
 timer       = "timer", identifier, "(", delay, ",", delay, ")" ;
-connection  = identifier, "->", identifier, [ "after", delay ] ;
+state       = "state", identifier, ":", type, "=", literal ;
+instance    = identifier, "=", identifier, "(", [ args ], ")" ;
+args        = literal, { ",", literal } ;
+literal     = natural | string | boolean ;
+boolean     = "true" | "false" ;
+connection  = endpoint, "->", endpoint, [ "after", delay ] ;
+endpoint    = identifier | qualified ;
+qualified   = identifier, ".", identifier ;
 
-prompt      = "prompt", identifier, "(", triggers, ")",
-              "->", effects, [ deadline ], prompt-string ;
+prompt      = "prompt", identifier, "(", [ triggers ], ")",
+              "->", effects, [ deadline ], string ;
+reaction    = "reaction", "(", [ triggers ], ")", "->", effects,
+              [ deadline ], code-body ;
+code-body   = "{=", rust, "=}" ;
 deadline    = "within", "(", duration, ")" ;
 delay       = duration | "0" ;
 duration    = natural, unit ;
 unit        = "ns" | "us" | "ms" | "s" | "sec" | "min" | "h" | "hr" ;
-triggers    = [ identifier, { ",", identifier } ] ;
+triggers    = endpoint, { ",", endpoint } ;
 
 effects     = effect, { ",", effect } ;
 effect      = atom, [ "?" ]
@@ -50,7 +69,88 @@ natural     = digit, { digit } ;
 Identifiers are case-sensitive. `//` starts a line comment and `/* ... */`
 delimits a block comment.
 
-### 2.1 Declarations
+### 2.1 Teams, agents and main
+
+A team is a reusable unit. Its parameters go in `()`, its agents in `[]`, and
+both lists are optional — `team Name { ... }` is a team with neither.
+
+Declaring a team creates nothing; `main` instantiates. A program is the teams
+plus the `main` that uses them:
+
+```omar
+team Node(idx : int)[agent : Codex]
+{
+    input token : int
+    output out : int
+
+    prompt agent(token) -> out "You are node $(idx). Token: $(token)"
+}
+
+main Relay {
+    n1 = Node(1)
+    n2 = Node(2)
+
+    n1.out -> n2.token
+}
+```
+
+A parameter is read back in a prompt as `$(idx)`, the same spelling a trigger
+uses.
+
+An agent's backend names what answers its reactions: `Claude` (or
+`ClaudeCode`), `Codex`, `Cursor`, `OpenCode`, `Agy`, `Stub`, or `Web`. The
+compiler takes any identifier here; an unknown one compiles and fails when the
+runtime tries to start it. Case does not matter.
+
+An argument is an int or a string literal, and nothing else — there are no
+expressions. `main` may be named or bare; the name identifies the run, and a
+runtime allows only one run of a given name at a time. A program without a
+`main` does not compile.
+
+Wiring in `main` is `instance.port -> instance.port`. Both sides must be
+qualified, because in `main` there is nothing else for a bare name to mean.
+
+A team may also instantiate a team, so teams nest:
+
+```omar
+team Stage(role : string)[worker : Codex]
+{
+    input inp : string
+    output out : string
+
+    prompt worker(inp) -> out "You are the $(role) stage. Got $(inp)."
+}
+
+team Pipeline[reporter : Codex]
+{
+    input brief : string
+    output summary : string
+
+    draft = Stage("draft");
+    refine = Stage("refine");
+
+    brief -> draft.inp
+    draft.out -> refine.inp
+
+    prompt reporter(refine.out) -> summary "Report $(refine.out)."
+}
+
+main Nest {
+    run = Pipeline()
+}
+```
+
+Inside a team, what it instantiated is reached as `instance.port` — the same
+spelling `main` uses. A reaction may trigger on a contained instance's
+*output* (`reporter(refine.out)`), which is how a team observes what it
+contains; to send data the other way, connect to the contained input
+(`brief -> draft.inp`). A bare name is this team's own port. From outside,
+reach a nested port by its full path: `run.draft.out`.
+
+A `;` may separate declarations in a team body and means nothing else. It is
+not accepted in `main`.
+
+### 2.2 Declarations
 
 - `input` is a typed external entry point.
 - `output` is a typed externally observable result.
@@ -74,7 +174,25 @@ The prompt body is delivered to the agent. `$(name)` interpolates a trigger
 value and may only reference that prompt's triggers. If a declared trigger is
 not present in an invocation, its interpolation expands to `<absent>`.
 
-### 2.2 Effect contracts
+- `reaction(a, b) -> effects {= ... =}` declares a reaction that runs Rust
+  instead of asking an agent, so it names none. Inside the body each trigger
+  is an `Option<T>` local (`None` when absent), each effect an `Option<T>`
+  local starting `None`; whatever is `Some` when the body ends is written. A
+  team parameter binds as an immutable local of its own type, named plainly:
+  a body writes `idx`, not `$(idx)`, and assigning to it does not compile,
+  because the argument is the instantiation's to choose. The bodies of a
+  program are compiled once, std only, no dependencies, so running a program
+  with one needs cargo; a program of prompts never invokes it. The generated
+  crate and the bytecode are written to `src-gen/<program>/` beside the
+  program — next to `src/` when the program is in one — and an unchanged
+  program is not rebuilt.
+- `state round : int = 0` declares a value a reaction reads and writes as
+  `self.round`. It starts at the literal and keeps its last value from one
+  invocation to the next. Types are `int`, `bool`, `string`, so the value a
+  run ends with can be kept in the deployment record and shown. Reactions of
+  an instance that keeps state run in declaration order at a tag.
+
+### 2.3 Effect contracts
 
 The expression after `->` declares the ports a reaction may set:
 
@@ -95,12 +213,12 @@ Every trigger must be an input or action. Every effect must be an output or
 action. A connection target must be an output or action, and its source and
 target types must match. Values must match their port types.
 
-### 2.3 Deadlines
+### 2.4 Deadlines
 
 `within(30s)` bounds how long one invocation may take, measured from when that
 invocation starts. Without it the run-wide timeout applies.
 
-See §2.4: a deadline is a duration like any other, and carries a unit.
+See §2.5: a deadline is a duration like any other, and carries a unit.
 
 What expiry does is read off the effect contract, so a deadline needs no
 second clause saying what to fall back to:
@@ -111,7 +229,10 @@ second clause saying what to fall back to:
 - a contract requiring an effect — `a`, `(a | b)` — has not been honoured.
   There is no value to invent, so the run fails.
 
-### 2.4 Durations
+A body that expires is killed with nothing written, so its instance keeps the
+state it held before the invocation.
+
+### 2.5 Durations
 
 Every span of time in the language is a duration: `after`, a timer's offset and
 period, an action's `delay`, and `within`. All are stored as nanoseconds.
@@ -189,16 +310,12 @@ begin at `(0, 0)`. Every hop costs one of three things:
 This is Lingua Franca's rule: ports do not introduce delays. What a tag decides,
 it decides completely.
 
-<<<<<<< HEAD
 ### 4.0 Fixpoint at a tag
-=======
+
 A tag is a moment something is present at. One with no events is not reached:
 no reaction can be enabled there, and no connection, output or timer can move,
 so announcing it would report an advance that did not happen. A program admitted
 with no inputs and no timer therefore passes through no tags at all.
-
-At each tag, the runtime:
->>>>>>> 26214fc (Do not announce a tag nothing is present at)
 
 A reaction fires at most once per tag, and only once the presence of every one
 of its triggers is decided. Ordering is not something a program asks for; it
@@ -326,7 +443,7 @@ slow agent, and the runtime does not distinguish them:
 - it may write exactly its reaction's effects, because `omar_set_port` refuses
   anything else;
 - it is bound by `within` like any other reaction, and an expired deadline is
-  read off the contract as in §2.3.
+  read off the contract as in §2.4.
 
 An operator's decision is therefore recorded dataflow rather than a side effect
 on the run: it flows through the same completion path as a model's, so a run
@@ -367,9 +484,11 @@ KILL_AGENT name
 DEFINE_PORT kind name type [delay]
 REMOVE_PORT name
 
+DECLARE_STATE name type initial
+
 CONNECT_PORTS source target [delay]
 
-INSTALL_REACTION id agent triggers effects contract prompt within
+INSTALL_REACTION id agent triggers effects contract prompt [body] [within]
 UPDATE_REACTION id triggers effects contract prompt within
 REMOVE_REACTION id
 
@@ -394,10 +513,12 @@ The port `delay` field is omitted when no fixed delay is declared.
 Reaction fields are ordered:
 
 ```text
-op, id, agent, triggers, effects, contract, prompt, within
+op, id, agent, triggers, effects, contract, prompt, body, within
 ```
 
-`within` is nanoseconds, and is omitted when the reaction declares no deadline.
+`body` is a reaction's Rust and is omitted for a prompt; `agent` is empty
+for a reaction. `within` is nanoseconds, and is omitted when the reaction
+declares no deadline.
 
 The VM verifies the complete plan before performing effects. Unknown
 instructions, invalid references, invalid types, or inconsistent contracts are
