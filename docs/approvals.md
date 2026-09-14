@@ -14,11 +14,11 @@ them end to end.
 
 ## Supported sessions
 
-The initial observer supports Codex sessions attached to the per-pane app-server
-that Omar provisions. It subscribes to the one loaded thread without overriding
-the session's model, permissions or approval policy. Commands, file changes,
-additional permissions, MCP elicitations and MCP tool approval questions provide
-structured signals. Ordinary questions and silence do not.
+Codex sessions use the per-pane app-server that Omar provisions. That observer
+subscribes to the one loaded thread without overriding the session's model,
+permissions or approval policy. Commands, file changes, additional permissions,
+MCP elicitations and MCP tool approval questions provide structured signals.
+Ordinary questions and silence do not.
 
 An explicit backend `waitingOnApproval` flag can provide a generic request when
 detailed replay is unavailable. Such a request directs the operator to the
@@ -26,16 +26,20 @@ terminal for the exact scope; its timer starts when Omar detects it. Detailed
 requests use the backend's timestamp where available. MCP approval questions are
 recognized by the backend's `mcp_tool_call_approval_` question marker.
 
-If the backend supports status reads but rejects history/resume, Omar keeps
-polling the explicit approval flag. Full details and MCP questions that are only
-classified as general user input may be unavailable on those builds; the
-observer does not guess their meaning from inactivity or terminal text.
+Claude Code, Cursor and Antigravity expose their native permission overlay only
+in their interactive terminal sessions. Their observers read the current tmux
+pane and recognize the exact overlay controls used for a tool permission; they
+do not send keys, install a decision hook or infer a request from inactivity.
+The notification provides a bounded description and directs the operator to the
+native terminal for the authoritative prompt. Claude questions and plan-mode
+pickers are excluded from this detection.
 
-Other backends, older versions without these APIs, command wrappers that prevent
-attachment, and ambiguous panes with multiple loaded threads cannot provide full
-monitoring. The API reports connection availability independently; the assistant
-header offers terminal access when monitoring is unavailable. This feature does
-not change how agents are launched or relax their permissions.
+Other backends, older versions with different terminal wording, command wrappers
+that prevent pane capture, and ambiguous panes with multiple loaded threads
+cannot provide full monitoring. The API reports connection availability
+independently; the assistant header offers terminal access when monitoring is
+unavailable. This feature does not change how agents are launched or relax their
+permissions.
 
 ## Adding a backend
 
@@ -45,11 +49,12 @@ connection state and bounded retention. `ApprovalObserver` receives an
 transport discovery, parsing, deduplication and authoritative reconciliation.
 It must not submit approval decisions or change backend permissions.
 
-`src/approvals/backends/mod.rs` is the capability registry. Currently it registers
-only Codex. To add Claude Code or another backend, implement `ApprovalObserver`
-in that directory and register its factory. Neither the hub nor the runtime/UI
-call sites need another backend-specific branch. Codex socket discovery,
-WebSocket JSON-RPC and protocol fixtures live in `backends/codex.rs`.
+`src/approvals/backends/mod.rs` is the capability registry. It registers Codex,
+Claude Code, Cursor and Antigravity. To add another backend, implement
+`ApprovalObserver` in that directory and register its factory. Neither the hub
+nor the runtime/UI call sites need another backend-specific branch. Codex socket
+discovery, WebSocket JSON-RPC and protocol fixtures live in `backends/codex.rs`;
+the non-Codex terminal overlay observers live in `backends/terminal.rs`.
 
 Both topology agents and the executive assistant select from this registry using
 their actual backend identity. Unsupported backends report `unsupported`

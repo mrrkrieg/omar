@@ -1,8 +1,10 @@
 //! Read-only permission observation. Execution and approval are independent:
 //! one pane can need input while the rest of a topology keeps running.
 //!
-//! No terminal scraping and no approval responses: the backend's existing TUI
-//! remains the authority. A disconnected observer retains its pending requests.
+//! Observers never respond to approvals: the backend's existing TUI remains the
+//! authority. Structured transports are preferred; backends without a passive
+//! stream may conservatively recognize their currently visible native overlay.
+//! A disconnected observer retains its pending requests.
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
@@ -458,7 +460,7 @@ mod tests {
         hub.watch(
             ApprovalTarget {
                 session: "not-a-real-pane".into(),
-                backend: "claude".into(),
+                backend: "unknown".into(),
                 command: None,
             },
             "assistant".into(),
