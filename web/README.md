@@ -69,7 +69,10 @@ disabled unless the daemon is live. Both runtime surfaces are loopback-only.
 
 ## Saved conversations
 
-**History** lists this runtime's chats. Start a **New chat**, search by title,
+The **Recent chats** sidebar lists this runtime's chats beside the conversation
+and topology. **History** collapses or reopens it; on narrow screens it opens a
+left-side drawer. Titles, message counts and the current selection refresh as
+messages arrive or another tab switches conversations. Start a **New chat**, search by title,
 or reopen an earlier conversation. Messages, commentary, diagram selections,
 and proposed programs (including inputs and topology previews) are saved
 before they are acknowledged, in `~/.omar/ea/<id>/chats.json` under the

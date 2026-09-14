@@ -2,7 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChatMessage as ChatMessageView } from "./chat-message";
-import { ChatHistory } from "./chat-history";
+import { ChatHistory, useHistoryDrawer } from "./chat-history";
 import { AgentTerminal } from "./agent-terminal";
 import { Timeline } from "./timeline";
 import { BackendMenu } from "./backend-menu";
@@ -140,7 +140,17 @@ export function Studio({
   const [selection, setSelection] = useState<string[]>([]);
   /** The agent whose terminal is open, if any. */
   const [terminalAgent, setTerminalAgent] = useState<string | null>(null);
-  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(true);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [historyRevision, setHistoryRevision] = useState(0);
+  const historyButtonRef = useRef<HTMLButtonElement>(null);
+  const historyDrawer = useHistoryDrawer();
+  const historyVisible = !isDemo && (historyDrawer ? drawerOpen : historyOpen);
+  function closeHistory() {
+    if (historyDrawer) setDrawerOpen(false);
+    else setHistoryOpen(false);
+    historyButtonRef.current?.focus();
+  }
   const [chatEpoch, setChatEpoch] = useState(0);
   const conversationIdRef = useRef<string | null>(null);
   const [conversationTitle, setConversationTitle] = useState("What should the team do?");
@@ -241,6 +251,7 @@ export function Studio({
   );
 
   const restoreConversation = useCallback((conversation: ConversationSummary) => {
+    setHistoryRevision((current) => current + 1);
     setConversationTitle(conversation.message_count ? conversation.title : "What should the team do?");
     if (conversationIdRef.current === conversation.id) return;
     conversationIdRef.current = conversation.id;
@@ -695,9 +706,12 @@ export function Studio({
           {!isDemo ? (
             <button
               type="button"
+              ref={historyButtonRef}
               className="history-button"
-              onClick={() => setHistoryOpen(true)}
-              aria-haspopup="dialog"
+              onClick={() => historyDrawer ? setDrawerOpen((open) => !open) : setHistoryOpen((open) => !open)}
+              aria-expanded={historyVisible}
+              aria-controls="chat-history"
+              aria-haspopup={historyDrawer ? "dialog" : undefined}
               aria-label="Chat history"
             >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
@@ -712,6 +726,21 @@ export function Studio({
         </div>
       </header>
 
+      <div className="studio-content">
+        {historyVisible ? (
+          <ChatHistory
+            serveUrl={serveUrl}
+            busy={phase === "drafting" || phase === "spawning" || (run !== null && !isRunFinished(run.status))}
+            mobile={historyDrawer}
+            revision={`${historyRevision}:${messages.length}`}
+            onClose={closeHistory}
+            onSelect={(conversation) => {
+              restoreConversation(conversation);
+              setChatEpoch((current) => current + 1);
+              if (historyDrawer) setDrawerOpen(false);
+            }}
+          />
+        ) : null}
       <section
         ref={workspaceRef}
         className="workspace"
@@ -1028,19 +1057,7 @@ export function Studio({
         </aside>
         ) : null}
       </section>
-
-      {historyOpen ? (
-        <ChatHistory
-          serveUrl={serveUrl}
-          busy={phase === "drafting" || phase === "spawning" || (run !== null && !isRunFinished(run.status))}
-          onClose={() => setHistoryOpen(false)}
-          onSelect={(conversation) => {
-            restoreConversation(conversation);
-            setChatEpoch((current) => current + 1);
-            setHistoryOpen(false);
-          }}
-        />
-      ) : null}
+      </div>
 
       {panelAgent && snapshot ? (
         <PortPanel

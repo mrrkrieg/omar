@@ -1,12 +1,24 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { ConversationSummary } from "./lib/protocol";
 import { fetchConversations, selectConversation } from "./lib/runtime-client";
 
-export function ChatHistory({ serveUrl, busy, onClose, onSelect }: {
+const mobileQuery = "(max-width: 900px)";
+function subscribeViewport(onChange: () => void) {
+  const query = window.matchMedia(mobileQuery);
+  query.addEventListener("change", onChange);
+  return () => query.removeEventListener("change", onChange);
+}
+export function useHistoryDrawer() {
+  return useSyncExternalStore(subscribeViewport, () => window.matchMedia(mobileQuery).matches, () => false);
+}
+
+export function ChatHistory({ serveUrl, busy, mobile, revision, onClose, onSelect }: {
   serveUrl: string;
   busy: boolean;
+  mobile: boolean;
+  revision: string;
   onClose: () => void;
   onSelect: (conversation: ConversationSummary) => void;
 }) {
@@ -17,68 +29,91 @@ export function ChatHistory({ serveUrl, busy, onClose, onSelect }: {
   const [switching, setSwitching] = useState(false);
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
+  const [retry, setRetry] = useState(0);
 
+  // Only the narrow-screen drawer is modal. Desktop history stays beside the
+  // conversation and never captures focus from the composer or topology.
   useEffect(() => {
+    if (!mobile) return;
     const dialog = dialogRef.current;
     const opener = document.activeElement as HTMLElement | null;
     dialog?.showModal();
-    const abort = new AbortController();
-    void fetchConversations(serveUrl, abort.signal).then((history) => {
-      setChats(history.conversations);
-      setActiveId(history.active_id);
-      setLoading(false);
-    }).catch((cause) => {
-      if (abort.signal.aborted) return;
-      setError(cause instanceof Error ? cause.message : String(cause));
-      setLoading(false);
-    });
     return () => {
-      abort.abort();
       dialog?.close();
       opener?.focus();
     };
-  }, [serveUrl]);
+  }, [mobile]);
+
+  // The sidebar stays mounted: update its title, count, ordering and selection
+  // after chat-stream changes, including selections made in another tab.
+  useEffect(() => {
+    const abort = new AbortController();
+    const timer = setTimeout(() => {
+      void fetchConversations(serveUrl, abort.signal).then((history) => {
+        if (abort.signal.aborted) return;
+        setChats(history.conversations);
+        setActiveId(history.active_id);
+        setError("");
+        setLoading(false);
+      }).catch((cause) => {
+        if (abort.signal.aborted) return;
+        setError(cause instanceof Error ? cause.message : String(cause));
+        setLoading(false);
+      });
+    }, 150);
+    return () => { clearTimeout(timer); abort.abort(); };
+  }, [serveUrl, revision, retry]);
 
   async function select(id?: string) {
     if (id === activeId) {
-      onClose();
+      if (mobile) onClose();
       return;
     }
     setSwitching(true);
     setError("");
     try {
-      onSelect(await selectConversation(serveUrl, id));
+      const conversation = await selectConversation(serveUrl, id);
+      setActiveId(conversation.id);
+      setQuery("");
+      setChats((current) => [conversation, ...current.filter((chat) => chat.id !== conversation.id)]);
+      onSelect(conversation);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
       setSwitching(false);
     }
   }
 
   const visible = chats.filter((chat) => chat.title.toLowerCase().includes(query.toLowerCase()));
-  return (
-    <dialog ref={dialogRef} className="chat-history" aria-labelledby="chat-history-title" onCancel={onClose}>
-      <header>
-        <h2 id="chat-history-title">Chat history</h2>
-        <button type="button" onClick={onClose} aria-label="Close chat history">×</button>
-      </header>
-      <p>Conversations are saved automatically on this runtime.</p>
-      <div className="history-actions">
-        <input aria-label="Search chats" placeholder="Search chats…" value={query} onChange={(event) => setQuery(event.target.value)} />
-        <button type="button" disabled={busy || loading || switching} onClick={() => void select()}>New chat</button>
-      </div>
-      {busy ? <p role="status">Wait for the current reply or run to finish before switching chats.</p> : null}
-      {error ? <p role="alert" className="history-error">{error}</p> : null}
-      <ul aria-label="Saved chats" aria-busy={loading || switching}>
-        {visible.map((chat) => (
-          <li key={chat.id}>
-            <button type="button" disabled={switching || (busy && chat.id !== activeId)} aria-current={chat.id === activeId ? "true" : undefined} onClick={() => void select(chat.id)}>
-              <span>{chat.title}</span>
-              <small>{chat.message_count} messages · {new Date(chat.updated_at).toLocaleString()}{chat.id === activeId ? " · Current" : ""}</small>
-            </button>
-          </li>
-        ))}
-      </ul>
-      {loading ? <p role="status">Loading conversations…</p> : visible.length === 0 && !error ? <p>No chats found.</p> : null}
+  const content = <>
+    <header>
+      <h2 id="chat-history-title">Recent chats</h2>
+      <button type="button" onClick={onClose} aria-label="Close chat history">×</button>
+    </header>
+    <div className="history-actions">
+      <button type="button" disabled={busy || loading || switching} onClick={() => void select()}>+ New chat</button>
+      <input aria-label="Search chats" placeholder="Search chats…" value={query} onChange={(event) => setQuery(event.target.value)} />
+    </div>
+    {busy ? <p role="status">Wait for the current reply or run to finish before switching chats.</p> : null}
+    {error ? <div className="history-error"><p role="alert">{error}</p><button type="button" onClick={() => setRetry((current) => current + 1)}>Retry</button></div> : null}
+    <ul aria-label="Saved chats" aria-busy={loading || switching}>
+      {visible.map((chat) => (
+        <li key={chat.id}>
+          <button type="button" disabled={switching || (busy && chat.id !== activeId)} aria-current={chat.id === activeId ? "true" : undefined} onClick={() => void select(chat.id)}>
+            <span>{chat.title}</span>
+            <small>{chat.message_count} messages · {new Date(chat.updated_at).toLocaleDateString()}{chat.id === activeId ? " · Current" : ""}</small>
+          </button>
+        </li>
+      ))}
+    </ul>
+    {loading ? <p role="status">Loading conversations…</p> : visible.length === 0 && !error ? <p>No chats found.</p> : null}
+    <p className="history-footnote">Saved automatically on this runtime.</p>
+  </>;
+  return mobile ? (
+    <dialog id="chat-history" ref={dialogRef} className="chat-history history-drawer" aria-label="Chat history" onCancel={onClose} onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <div className="history-content">{content}</div>
     </dialog>
+  ) : (
+    <aside id="chat-history" className="chat-history" aria-label="Chat history">{content}</aside>
   );
 }
