@@ -286,14 +286,26 @@ impl Serve {
         let agent_token = Uuid::new_v4().to_string();
         let approvals = crate::approvals::ApprovalHub::default();
         #[cfg(not(test))]
-        approvals.watch(
-            crate::ea::ea_manager_session(ea_id, &config.dashboard.session_prefix),
-            "assistant".into(),
-            "Executive assistant".into(),
-            None,
-            None,
-            true,
-        );
+        {
+            let session = crate::ea::ea_manager_session(ea_id, &config.dashboard.session_prefix);
+            let backend = TmuxClient::new("")
+                .session_backend(&session)
+                .or_else(|| {
+                    crate::manager::command_backend_name(&config.agent.default_command)
+                        .map(str::to_owned)
+                })
+                .unwrap_or_default();
+            approvals.watch(
+                crate::approvals::ApprovalTarget {
+                    session,
+                    backend,
+                    command: None,
+                },
+                "assistant".into(),
+                "Executive assistant".into(),
+                None,
+            );
+        }
         let context = Arc::new(Context_ {
             omar_dir: omar_dir.to_path_buf(),
             ea_id,

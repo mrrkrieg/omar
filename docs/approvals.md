@@ -37,6 +37,26 @@ monitoring. The API reports connection availability independently; the assistant
 header offers terminal access when monitoring is unavailable. This feature does
 not change how agents are launched or relax their permissions.
 
+## Adding a backend
+
+`ApprovalHub` owns shared request identity, invocation correlation, timestamps,
+connection state and bounded retention. `ApprovalObserver` receives an
+`ApprovalSink` for publishing display metadata and lifecycle updates; it owns
+transport discovery, parsing, deduplication and authoritative reconciliation.
+It must not submit approval decisions or change backend permissions.
+
+`src/approvals/backends/mod.rs` is the capability registry. Currently it registers
+only Codex. To add Claude Code or another backend, implement `ApprovalObserver`
+in that directory and register its factory. Neither the hub nor the runtime/UI
+call sites need another backend-specific branch. Codex socket discovery,
+WebSocket JSON-RPC and protocol fixtures live in `backends/codex.rs`.
+
+Both topology agents and the executive assistant select from this registry using
+their actual backend identity. Unsupported backends report `unsupported`
+immediately and do not start a Codex monitor. Existing unattended launch defaults
+(e.g. Claude/Antigravity skip-permissions and Cursor yolo) remain unchanged;
+lack of notification support never overrides an operator's permission settings.
+
 ## Lifecycle and wire protocol
 
 `GET /v1/approvals` returns an `ApprovalSnapshot`. `GET /v1/approvals/events`
