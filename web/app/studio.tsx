@@ -144,6 +144,7 @@ export function Studio({
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [historyRevision, setHistoryRevision] = useState(0);
   const historyButtonRef = useRef<HTMLButtonElement>(null);
+    const historyRailButtonRef = useRef<HTMLButtonElement>(null);
   const historyDrawer = useHistoryDrawer();
   const historyVisible = !isDemo && (historyDrawer ? drawerOpen : historyOpen);
   function closeHistory() {
@@ -151,7 +152,14 @@ export function Studio({
     else setHistoryOpen(false);
     historyButtonRef.current?.focus();
   }
-  const [chatEpoch, setChatEpoch] = useState(0);
+    function openHistory() {
+    if (historyDrawer) setDrawerOpen(true);
+    else setHistoryOpen(true);
+  }
+  useEffect(() => {
+    if (!isDemo && !historyDrawer && !historyOpen) historyRailButtonRef.current?.focus();
+  }, [historyDrawer, historyOpen, isDemo]);
+const [chatEpoch, setChatEpoch] = useState(0);
   const conversationIdRef = useRef<string | null>(null);
   const [conversationTitle, setConversationTitle] = useState("What should the team do?");
   /** The web agent whose port panel is open. A program may declare several,
@@ -703,7 +711,7 @@ export function Studio({
             {daemon.state === "demo" ? "demo topology" : serveUrl}
             {daemon.state === "offline" ? " · unreachable" : null}
           </span>
-          {!isDemo ? (
+                    {!isDemo && historyDrawer ? (
             <button
               type="button"
               ref={historyButtonRef}
@@ -712,7 +720,7 @@ export function Studio({
               aria-expanded={historyVisible}
               aria-controls="chat-history"
               aria-haspopup={historyDrawer ? "dialog" : undefined}
-              aria-label="Chat history"
+                            aria-label="Open chat history"
             >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
                 <path d="M3 11a9 9 0 1 1 2.6 7M3 4v7h7M12 7v5l3 2" />
@@ -727,13 +735,16 @@ export function Studio({
       </header>
 
       <div className="studio-content">
-        {historyVisible ? (
+                {!isDemo && (!historyDrawer || drawerOpen) ? (
           <ChatHistory
             serveUrl={serveUrl}
             busy={phase === "drafting" || phase === "spawning" || (run !== null && !isRunFinished(run.status))}
             mobile={historyDrawer}
             revision={`${historyRevision}:${messages.length}`}
+                        collapsed={!historyDrawer && !historyOpen}
             onClose={closeHistory}
+                        onOpen={openHistory}
+            railButtonRef={historyRailButtonRef}
             onSelect={(conversation) => {
               restoreConversation(conversation);
               setChatEpoch((current) => current + 1);
