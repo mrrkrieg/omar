@@ -12,6 +12,9 @@ inductive Token where
       declaration that happens to start with a word. -/
   | duration : Nat -> Token
   | text : String -> Token
+  /-- A `{= ... =}` body, captured as raw source. Rust is lexed by rustc, not
+      here, so nothing inside is interpreted. -/
+  | code : String -> Token
   | sym : String -> Token
   deriving Repr, BEq
 
@@ -57,6 +60,101 @@ private partial def readText (acc : List Char) : List Char -> Except String (Str
   | '"' :: rest => pure (String.ofList acc.reverse, rest)
   | c :: rest => readText (c :: acc) rest
 
+/-- The `#` count opening a raw string after `r`, and what follows the quote. -/
+private def rawOpen : List Char -> Option (Nat × List Char)
+  | '"' :: rest => some (0, rest)
+  | cs =>
+      let (hashes, tail) := takeWhile (· == '#') cs
+      match tail with
+      | '"' :: rest => if hashes.isEmpty then none else some (hashes.length, rest)
+      | _ => none
+
+/-- Whether the character just taken continues a word, so an `r` after it opens
+    no raw string: `var"x"` is not one, `r"x"` is. -/
+private def wordBefore : List Char -> Bool
+  | c :: _ => isWordRest c
+  | [] => false
+
+mutual
+
+/-- Raw source up to the `=}` that closes the body, accumulated reversed.
+
+    Rust is lexed by rustc and not here, but the terminator still has to be
+    found, and a `=}` inside a string or a comment closes nothing. So exactly
+    enough Rust is recognised to step over those: string, raw string and
+    character literals, and line and block comments. A lifetime opens like a
+    character literal and closes nothing, so only a literal that closes within
+    its own two or three characters is taken for one. -/
+private partial def readCode (acc : List Char) :
+    List Char -> Except String (String × List Char)
+  | [] => throw "unterminated code block"
+  | '=' :: '}' :: rest => pure (String.ofList acc.reverse, rest)
+  | '/' :: '/' :: rest => readLineComment ('/' :: '/' :: acc) rest
+  | '/' :: '*' :: rest => readBlockComment 1 ('*' :: '/' :: acc) rest
+  | '"' :: rest => readString ('"' :: acc) rest
+  | '\'' :: '\\' :: rest => readCharLiteral ('\\' :: '\'' :: acc) rest
+  | '\'' :: c :: '\'' :: rest =>
+      readCode ('\'' :: c :: '\'' :: acc) rest
+  -- `r"..."`, and the byte and C string forms that wear a prefix before it.
+  | 'b' :: 'r' :: rest =>
+      match (if wordBefore acc then none else rawOpen rest) with
+      | some (hashes, tail) =>
+          readRawString hashes ('"' :: (List.replicate hashes '#' ++ ('r' :: 'b' :: acc))) tail
+      | none => readCode ('b' :: acc) ('r' :: rest)
+  | 'c' :: 'r' :: rest =>
+      match (if wordBefore acc then none else rawOpen rest) with
+      | some (hashes, tail) =>
+          readRawString hashes ('"' :: (List.replicate hashes '#' ++ ('r' :: 'c' :: acc))) tail
+      | none => readCode ('c' :: acc) ('r' :: rest)
+  | 'r' :: rest =>
+      match (if wordBefore acc then none else rawOpen rest) with
+      | some (hashes, tail) =>
+          readRawString hashes ('"' :: (List.replicate hashes '#' ++ ('r' :: acc))) tail
+      | none => readCode ('r' :: acc) rest
+  | c :: rest => readCode (c :: acc) rest
+
+private partial def readLineComment (acc : List Char) :
+    List Char -> Except String (String × List Char)
+  | [] => throw "unterminated code block"
+  | '\n' :: rest => readCode ('\n' :: acc) rest
+  | c :: rest => readLineComment (c :: acc) rest
+
+private partial def readBlockComment (depth : Nat) (acc : List Char) :
+    List Char -> Except String (String × List Char)
+  | [] => throw "unterminated code block"
+  | '/' :: '*' :: rest => readBlockComment (depth + 1) ('*' :: '/' :: acc) rest
+  | '*' :: '/' :: rest =>
+      if depth == 1 then readCode ('/' :: '*' :: acc) rest
+      else readBlockComment (depth - 1) ('/' :: '*' :: acc) rest
+  | c :: rest => readBlockComment depth (c :: acc) rest
+
+private partial def readString (acc : List Char) :
+    List Char -> Except String (String × List Char)
+  | [] => throw "unterminated code block"
+  | '\\' :: c :: rest => readString (c :: '\\' :: acc) rest
+  | '"' :: rest => readCode ('"' :: acc) rest
+  | c :: rest => readString (c :: acc) rest
+
+/-- A raw string has no escapes, so only the matching `"###` ends it. -/
+private partial def readRawString (hashes : Nat) (acc : List Char) :
+    List Char -> Except String (String × List Char)
+  | [] => throw "unterminated code block"
+  | '"' :: rest =>
+      let (closing, tail) := takeWhile (· == '#') rest
+      if closing.length >= hashes then
+        readCode (List.replicate hashes '#' ++ ('"' :: acc))
+          (List.replicate (closing.length - hashes) '#' ++ tail)
+      else readRawString hashes (closing.reverse ++ ('"' :: acc)) tail
+  | c :: rest => readRawString hashes (c :: acc) rest
+
+private partial def readCharLiteral (acc : List Char) :
+    List Char -> Except String (String × List Char)
+  | [] => throw "unterminated code block"
+  | '\'' :: rest => readCode ('\'' :: acc) rest
+  | c :: rest => readCharLiteral (c :: acc) rest
+
+end
+
 private partial def lexChars : List Char -> Except String (List Token)
   | [] => pure []
   | '/' :: '/' :: rest =>
@@ -66,6 +164,9 @@ private partial def lexChars : List Char -> Except String (List Token)
       lexChars (← skipBlockComment 1 rest)
   | '-' :: '>' :: rest => do
       pure (Token.sym "->" :: (← lexChars rest))
+  | '{' :: '=' :: rest => do
+      let (raw, tail) ← readCode [] rest
+      pure (Token.code raw :: (← lexChars tail))
   | '"' :: rest => do
       let (value, tail) ← readText [] rest
       pure (Token.text value :: (← lexChars tail))
@@ -150,6 +251,9 @@ structure Reaction where
   effects : Array String
   contract : String
   prompt : String
+  /-- A Rust body, when the reaction is code rather than a prompt. The two are
+      exclusive: whichever the source gave, the other is empty. -/
+  body : Option String := none
   /-- How long one invocation may take, in nanoseconds. `none` leaves it to the
       run-wide timeout. -/
   within : Option Nat := none
@@ -167,12 +271,42 @@ structure Param where
 inductive Literal where
   | int : Nat -> Literal
   | str : String -> Literal
+  | bool : Bool -> Literal
   deriving Repr, BEq
+
+private def literalText : Literal -> String
+  | .int value => toString value
+  | .str value => value
+  | .bool value => toString value
+
+private def literalType : Literal -> String
+  | .int _ => "int"
+  | .str _ => "string"
+  | .bool _ => "bool"
 
 structure Instance where
   name : String
   team : String
   args : Array Literal
+  deriving Repr
+
+/-- `state round : int = 0`. A value a code body reads and writes as
+    `self.round`, and which outlives the invocation. -/
+structure StateVar where
+  name : String
+  type : String
+  initial : Literal
+  instance_ : String := ""
+  deriving Repr
+
+/-- A team parameter with the argument its instantiation bound to it. A
+    constant, so it is carried rather than substituted: the generated Rust
+    binds it the way it binds a port, and the body names it plainly. -/
+structure ParamVal where
+  name : String
+  type : String
+  value : Literal
+  instance_ : String := ""
   deriving Repr
 
 /-- A team as written: a template, which `main` instantiates. A team is never
@@ -185,6 +319,7 @@ structure TeamDecl where
   timers : Array Timer
   connections : Array Connection
   reactions : Array Reaction
+  states : Array StateVar := #[]
   /-- Teams this one instantiates. A team is a template, so instantiating one
       inside another nests the template rather than sharing it: `b.a.out` is
       not `c.a.out`. -/
@@ -230,6 +365,8 @@ structure Program where
   timers : Array Timer
   connections : Array Connection
   reactions : Array Reaction
+  states : Array StateVar
+  params : Array ParamVal
   deriving Repr
 
 abbrev Parser (α : Type) := List Token -> Except String (α × List Token)
@@ -309,6 +446,7 @@ private def tokenSource : Token -> String
   | .duration value => s!"{value}ns"
   | .sym value => value
   | .text _ => "<prompt>"
+  | .code _ => "<code>"
 
 private def productionTargets (tokens : List Token) : Array String :=
   -- Keep only words which occur at the start of an atom. Literals always
@@ -339,10 +477,11 @@ private def delayValue : Parser Nat
   | Token.nat 0 :: rest => pure (0, rest)
   | tokens => duration tokens
 
-/-- Everything between `->` and either `within` or the prompt string. -/
+/-- Everything between `->` and `within`, the prompt string, or a code body. -/
 private partial def takeContract (acc : List Token) : List Token -> Except String (List Token × List Token)
-  | [] => throw "expected prompt string after production contract"
+  | [] => throw "expected prompt string or code block after production contract"
   | tokens@(Token.text _ :: _) => pure (acc.reverse, tokens)
+  | tokens@(Token.code _ :: _) => pure (acc.reverse, tokens)
   | tokens@(Token.word "within" :: _) => pure (acc.reverse, tokens)
   | token :: rest => takeContract (token :: acc) rest
 
@@ -368,7 +507,9 @@ private partial def parseDependencies (acc : Array String) : Parser (Array Strin
 private def literal : Parser Literal
   | Token.nat value :: rest => pure (Literal.int value, rest)
   | Token.text value :: rest => pure (Literal.str value, rest)
-  | tokens => throw s!"expected an int or string argument, found {reprStr tokens.head?}"
+  | Token.word "true" :: rest => pure (Literal.bool true, rest)
+  | Token.word "false" :: rest => pure (Literal.bool false, rest)
+  | tokens => throw s!"expected an int, bool, or string literal, found {reprStr tokens.head?}"
 
 private partial def parseArgs (acc : Array Literal) : Parser (Array Literal)
   | Token.sym ")" :: rest => pure (acc, rest)
@@ -392,35 +533,37 @@ private partial def parseDeclarations
     (timers : Array Timer)
     (connections : Array Connection)
     (reactions : Array Reaction)
-    (instances : Array Instance) :
+    (instances : Array Instance)
+    (states : Array StateVar) :
     List Token ->
       Except String
         (Array Port × Array Timer × Array Connection × Array Reaction × Array Instance ×
-          List Token)
-  | Token.sym "}" :: rest => pure (ports, timers, connections, reactions, instances, rest)
+          Array StateVar × List Token)
+  | Token.sym "}" :: rest =>
+      pure (ports, timers, connections, reactions, instances, states, rest)
   -- `a = A();` ends with an optional semicolon; it separates declarations and
   -- means nothing else.
   | Token.sym ";" :: rest =>
-      parseDeclarations reactionIndex ports timers connections reactions instances rest
+      parseDeclarations reactionIndex ports timers connections reactions instances states rest
   | Token.word "input" :: rest => do
       let (name, rest) ← word rest
       let (_, rest) ← expectSym ":" rest
       let (type, rest) ← parseType rest
-      parseDeclarations reactionIndex (ports.push { name, kind := .input, type }) timers connections reactions instances rest
+      parseDeclarations reactionIndex (ports.push { name, kind := .input, type }) timers connections reactions instances states rest
   | Token.word "output" :: rest => do
       let (name, rest) ← word rest
       let (_, rest) ← expectSym ":" rest
       let (type, rest) ← parseType rest
-      parseDeclarations reactionIndex (ports.push { name, kind := .output, type }) timers connections reactions instances rest
+      parseDeclarations reactionIndex (ports.push { name, kind := .output, type }) timers connections reactions instances states rest
   | Token.word "action" :: rest => do
       let (name, rest) ← word rest
       let (delay, rest) ← parseActionDelay rest
       match rest with
       | Token.sym ":" :: tail =>
           let (type, tail) ← parseType tail
-          parseDeclarations reactionIndex (ports.push { name, kind := .action, type, delay }) timers connections reactions instances tail
+          parseDeclarations reactionIndex (ports.push { name, kind := .action, type, delay }) timers connections reactions instances states tail
       | _ =>
-          parseDeclarations reactionIndex (ports.push { name, kind := .action, type := "signal", delay }) timers connections reactions instances rest
+          parseDeclarations reactionIndex (ports.push { name, kind := .action, type := "signal", delay }) timers connections reactions instances states rest
   | Token.word "timer" :: rest => do
       let (name, rest) ← word rest
       let (_, rest) ← expectSym "(" rest
@@ -428,13 +571,22 @@ private partial def parseDeclarations
       let (_, rest) ← expectSym "," rest
       let (period, rest) ← delayValue rest
       let (_, rest) ← expectSym ")" rest
-      parseDeclarations reactionIndex ports (timers.push { name, offset, period }) connections reactions instances rest
+      parseDeclarations reactionIndex ports (timers.push { name, offset, period }) connections reactions instances states rest
+  -- `state round : int = 0`: a value a code body keeps between invocations.
+  | Token.word "state" :: rest => do
+      let (name, rest) ← word rest
+      let (_, rest) ← expectSym ":" rest
+      let (type, rest) ← parseType rest
+      let (_, rest) ← expectSym "=" rest
+      let (initial, rest) ← literal rest
+      parseDeclarations reactionIndex ports timers connections reactions instances
+        (states.push { name, type, initial }) rest
   | Token.word name :: Token.sym "=" :: rest => do
       let (team, rest) ← word rest
       let (_, rest) ← expectSym "(" rest
       let (args, rest) ← parseArgs #[] rest
       parseDeclarations reactionIndex ports timers connections reactions
-        (instances.push { name, team, args }) rest
+        (instances.push { name, team, args }) states rest
   | Token.word "prompt" :: rest => do
       let (agent, rest) ← word rest
       let (_, rest) ← expectSym "(" rest
@@ -460,7 +612,32 @@ private partial def parseDeclarations
         id := s!"reaction.{reactionIndex}"
         agent, triggers, effects, contract, prompt, within
       }
-      parseDeclarations (reactionIndex + 1) ports timers connections (reactions.push reaction) instances rest
+      parseDeclarations (reactionIndex + 1) ports timers connections (reactions.push reaction) instances states rest
+  -- `prompt` asks an agent, `reaction` just runs, so a reaction names none.
+  | Token.word "reaction" :: rest => do
+      let (_, rest) ← expectSym "(" rest
+      let (triggers, rest) ← parseDependencies #[] rest
+      let (_, rest) ← expectSym "->" rest
+      let (contractTokens, rest) ← takeContract [] rest
+      -- `within(30s)` bounds a body the way it bounds an agent: an expired
+      -- body is killed unwritten, and expiry is read off the contract.
+      let (within, rest) ← match rest with
+        | Token.word "within" :: tail => do
+            let (_, tail) ← expectSym "(" tail
+            let (value, tail) ← duration tail
+            let (_, tail) ← expectSym ")" tail
+            pure (some value, tail)
+        | _ => pure (none, rest)
+      let (body, rest) ← match rest with
+        | Token.code body :: tail => pure (body, tail)
+        | _ => throw "expected code block after production contract"
+      let effects := productionTargets contractTokens
+      let contract := String.intercalate " " (contractTokens.map tokenSource)
+      let reaction := {
+        id := s!"reaction.{reactionIndex}"
+        agent := "", triggers, effects, contract, prompt := "", body := some body, within
+      }
+      parseDeclarations (reactionIndex + 1) ports timers connections (reactions.push reaction) instances states rest
   | Token.word first :: rest => do
       -- An endpoint is either a port of this team or `instance.port` of one it
       -- instantiated. Both are one name once the instance path is prepended,
@@ -476,7 +653,7 @@ private partial def parseDeclarations
             let (value, tail) ← delayValue tail
             pure (some value, tail)
         | _ => pure (none, rest)
-      parseDeclarations reactionIndex ports timers (connections.push { source, target, delay }) reactions instances rest
+      parseDeclarations reactionIndex ports timers (connections.push { source, target, delay }) reactions instances states rest
   | token :: _ => throw s!"unexpected token in team body: {reprStr token}"
   | [] => throw "unterminated team body"
 
@@ -498,9 +675,9 @@ private def parseTeam : Parser TeamDecl := fun tokens => do
         pure (agents, rest)
     | _ => pure (#[], tokens)
   let (_, tokens) ← expectSym "{" tokens
-  let (ports, timers, connections, reactions, instances, tokens) ←
-    parseDeclarations 0 #[] #[] #[] #[] #[] tokens
-  pure ({ name, params, agents, ports, timers, connections, reactions, instances }, tokens)
+  let (ports, timers, connections, reactions, instances, states, tokens) ←
+    parseDeclarations 0 #[] #[] #[] #[] #[] #[] tokens
+  pure ({ name, params, agents, ports, timers, connections, reactions, instances, states }, tokens)
 
 private partial def parseMainBody
     (instances : Array Instance)
@@ -575,8 +752,23 @@ private def validate (program : Program) : Except String Program := do
       throw s!"timer '{timer.name}' is also a port; a trigger has one name"
     if timer.offset == 0 && timer.period == 0 then
       throw s!"timer '{timer.name}' never fires; give it an offset, a period, or both"
+  ensureUnique "state" (program.states.map (·.name))
+  for var in program.states do
+    if containsName portNames var.name || containsName timerNames var.name then
+      throw s!"state '{var.name}' is also a port or timer; a name means one thing"
+    -- OMAR's types, not the host's, so a value can be recorded and shown.
+    if var.type != "int" && var.type != "bool" && var.type != "string" then
+      throw s!"state '{var.name}' is {var.type}; state is int, bool, or string"
+    if literalType var.initial != var.type then
+      throw s!"state '{var.name}' is {var.type} but starts as {literalType var.initial}"
+  let stateNames := program.states.map (·.name)
+  for param in program.params do
+    if containsName portNames param.name || containsName timerNames param.name
+        || containsName stateNames param.name then
+      throw s!"parameter '{param.name}' is also a port, timer or state; \
+        a body could not tell them apart"
   for reaction in program.reactions do
-    if !containsName agentNames reaction.agent then
+    if reaction.body.isNone && !containsName agentNames reaction.agent then
       throw s!"reaction references unknown agent '{reaction.agent}'"
     for trigger in reaction.triggers do
       -- A reaction reads its own team's inputs and actions, and the *outputs*
@@ -603,14 +795,6 @@ private def validate (program : Program) : Except String Program := do
     if source.type != target.type then
       throw s!"connection type mismatch from '{connection.source}' to '{connection.target}'"
   pure program
-
-private def literalText : Literal -> String
-  | .int value => toString value
-  | .str value => value
-
-private def literalType : Literal -> String
-  | .int _ => "int"
-  | .str _ => "string"
 
 /-- `instance.member`. The VM has one flat namespace, so instantiating a team
     is a renaming: everything it declares gains its instance's prefix. -/
@@ -657,6 +841,13 @@ private def bindArguments (decl : TeamDecl) (inst : Instance) :
       pure (acc.push (param.name, literalText arg)))
     (#[] : Array (String × String))
 
+/-- The same binding as a value the generated code can declare. -/
+private def boundParams (decl : TeamDecl) (inst : Instance) (path : String) :
+    Array ParamVal :=
+  (decl.params.zip inst.args).map fun (param, arg) =>
+    { name := qualify path param.name, type := param.type, value := arg,
+      instance_ := path }
+
 /-- Everything one instantiation contributes, its nested instantiations
     included. -/
 structure Elaborated where
@@ -665,6 +856,8 @@ structure Elaborated where
   timers : Array Timer := #[]
   connections : Array Connection := #[]
   reactions : Array Reaction := #[]
+  states : Array StateVar := #[]
+  params : Array ParamVal := #[]
   instances : Array InstanceDecl := #[]
 
 private def Elaborated.append (a b : Elaborated) : Elaborated :=
@@ -673,6 +866,8 @@ private def Elaborated.append (a b : Elaborated) : Elaborated :=
     timers := a.timers ++ b.timers
     connections := a.connections ++ b.connections
     reactions := a.reactions ++ b.reactions
+    states := a.states ++ b.states
+    params := a.params ++ b.params
     instances := a.instances ++ b.instances }
 
 /-- How deep teams may nest.
@@ -704,6 +899,8 @@ private partial def elaborateInstance
     { port with name := qualify path port.name, instance_ := path }
   let timers := decl.timers.map fun timer =>
     { timer with name := qualify path timer.name, instance_ := path }
+  let states := decl.states.map fun var =>
+    { var with name := qualify path var.name, instance_ := path }
   -- An endpoint written `a.out` is already the nested instance's local name,
   -- so prefixing the path is all it takes to reach `b.a.out`.
   let connections := decl.connections.map fun connection =>
@@ -713,16 +910,21 @@ private partial def elaborateInstance
   let reactions := decl.reactions.map fun reaction =>
     { reaction with
         id := qualify path reaction.id
-        agent := qualify path reaction.agent
+        agent := if reaction.agent.isEmpty then "" else qualify path reaction.agent
         triggers := reaction.triggers.map (qualify path)
         effects := reaction.effects.map (qualify path)
         instance_ := path
         contract := qualifyContract path decl.ports reaction.contract
         prompt :=
           substitute bindings
-            (qualifyPrompt path decl.ports decl.timers reaction.triggers reaction.prompt) }
+            (qualifyPrompt path decl.ports decl.timers reaction.triggers reaction.prompt)
+        -- A body names both ports and parameters by their local names, and
+        -- the generated Rust binds each. Only a prompt is text to substitute
+        -- into.
+        body := reaction.body }
   let own : Elaborated :=
-    { agents, ports, timers, connections, reactions
+    { agents, ports, timers, connections, reactions, states
+      params := boundParams decl inst path
       instances := #[{ name := path, team := inst.team, parent }] }
   decl.instances.foldlM
     (fun acc nested => do
@@ -751,6 +953,8 @@ private def elaborate (programName : String) (teams : Array TeamDecl) (main : Ma
     timers := whole.timers
     connections := whole.connections ++ wired
     reactions := whole.reactions
+    states := whole.states
+    params := whole.params
   }
 
 /-- `programName` is the fallback when `main` is not named: the source file,
@@ -772,6 +976,11 @@ def parse (programName : String) (tokens : List Token) : Except String Program :
 
 private def jsonStringArray (values : Array String) : Json :=
   Json.arr (values.map toJson)
+
+private def literalJson : Literal -> Json
+  | .int value => toJson value
+  | .str value => toJson value
+  | .bool value => toJson value
 
 private def renderField (field : String × Json) : String :=
   s!"{(toJson field.1).compress}: {field.2.compress}"
@@ -810,6 +1019,20 @@ def compile (program : Program) : String :=
       ("offset", toJson timer.offset),
       ("period", toJson timer.period)
     ]
+  let states := program.states.map fun var =>
+    instruction "declare_state" [
+      ("instance", toJson var.instance_),
+      ("name", toJson var.name),
+      ("type", toJson var.type),
+      ("initial", literalJson var.initial)
+    ]
+  let params := program.params.map fun param =>
+    instruction "declare_param" [
+      ("instance", toJson param.instance_),
+      ("name", toJson param.name),
+      ("type", toJson param.type),
+      ("value", literalJson param.value)
+    ]
   let connections := program.connections.map fun connection =>
     let fields := [
       ("source", toJson connection.source),
@@ -827,13 +1050,16 @@ def compile (program : Program) : String :=
       ("effects", jsonStringArray reaction.effects),
       ("contract", toJson reaction.contract),
       ("prompt", toJson reaction.prompt)
-    ] ++ match reaction.within with
+    ] ++ (match reaction.body with
+      | some body => [("body", toJson body)]
+      | none => []) ++ match reaction.within with
       | some within => [("within", toJson within)]
       | none => []
     instruction "install_reaction" fields
   let commit := instruction "commit_plan"
   let instructions :=
-    #[begin] ++ instances ++ agents ++ ports ++ timers ++ connections ++ reactions ++ #[commit]
+    #[begin] ++ instances ++ agents ++ ports ++ timers ++ states ++ params ++ connections ++ reactions ++
+      #[commit]
   let rendered := String.intercalate ",\n    " instructions.toList
   "{\n  \"version\": 1,\n  \"team\": " ++ (toJson program.team).compress ++
     ",\n  \"instructions\": [\n    " ++ rendered ++ "\n  ]\n}\n"
