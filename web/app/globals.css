@@ -2310,3 +2310,37 @@ h2 {
 @media (max-width: 900px) {
   .chat-history:not(.history-drawer) { display: none; }
 }
+
+/* Compact rail keeps chat navigation reachable when folded. */
+.history-rail {
+  flex: 0 0 64px;
+  display: flex;
+  justify-content: center;
+  padding: 12px;
+  background: var(--panel);
+  border-right: 1px solid var(--line);
+}
+.history-rail button,
+.chat-history header .history-fold {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.sidebar-icon { width: 21px; height: 21px; }
+.history-rail button:hover,
+.chat-history header .history-fold:hover {
+  border-color: var(--purple);
+  background: var(--purple-soft);
+}
+.history-rail button:focus-visible,
+.chat-history header .history-fold:focus-visible {
+  outline: 2px solid var(--purple);
+  outline-offset: 2px;
+}
+@media (max-width: 900px) { .history-rail { display: none; } }
