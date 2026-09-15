@@ -1713,10 +1713,12 @@ test("chat history restores messages and proposals after switching and reloading
   await page.getByLabel("Draft workflow").click();
   await expect(page.locator(".messages")).toContainText("Keep the same requirements");
   await expect(history.locator('[aria-current="true"]')).toContainText("Review the release plan");
-  await history.getByRole("button", { name: "Close chat history" }).click();
-  await expect(history).toBeHidden();
-  await expect(page.getByRole("button", { name: "Chat history" })).toBeFocused();
-  await page.getByRole("button", { name: "Chat history" }).click();
+      await history.getByRole("button", { name: "Fold chat history" }).click();
+  const rail = page.getByRole("navigation", { name: "Chat navigation" });
+    await expect(history).toHaveCount(0);
+  await expect(rail).toBeVisible();
+    await expect(rail.getByRole("button", { name: "Open chat history" })).toBeFocused();
+    await rail.getByRole("button", { name: "Open chat history" }).click();
   await expect(history).toBeVisible();
   await expect(page.getByRole("group", { name: "Deploy design" })).toBeVisible();
 });
@@ -1728,7 +1730,7 @@ test("chat history reports load failures and prevents switching during a reply",
   await useFakeServe(page);
   await page.getByLabel("Describe a workflow").fill("Review the release plan");
   await page.getByLabel("Draft workflow").click();
-  await page.getByRole("button", { name: "Chat history" }).click();
+  await page.getByRole("button", { name: "Open chat history" }).click();
   const history = page.getByRole("dialog", { name: "Chat history" });
   await expect(history.getByRole("button", { name: "New chat" })).toBeDisabled();
   await expect(history).toContainText("Wait for the current reply");
@@ -1737,9 +1739,9 @@ test("chat history reports load failures and prevents switching during a reply",
   expect(bounds.x + bounds.width).toBeLessThanOrEqual(390);
   await page.keyboard.press("Escape");
   await expect(history).toBeHidden();
-  await expect(page.getByRole("button", { name: "Chat history" })).toBeFocused();
+  await expect(page.getByRole("button", { name: "Open chat history" })).toBeFocused();
   await page.route("**/v1/chats", (route) => route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "Cannot read saved chats" }) }));
-  await page.getByRole("button", { name: "Chat history" }).click();
+  await page.getByRole("button", { name: "Open chat history" }).click();
   await expect(history.getByRole("alert")).toContainText("Cannot read saved chats");
   await page.unroute("**/v1/chats");
   await history.getByRole("button", { name: "Retry", exact: true }).click();
@@ -1775,7 +1777,7 @@ test("chat history drawer closes after selecting a chat and responds to viewport
   await page.setViewportSize({ width: 390, height: 844 });
   await useFakeServe(page);
   await expect(page.getByRole("dialog", { name: "Chat history" })).toHaveCount(0);
-  await page.getByRole("button", { name: "Chat history" }).click();
+  await page.getByRole("button", { name: "Open chat history" }).click();
   const drawer = page.getByRole("dialog", { name: "Chat history" });
   await expect(drawer).toBeVisible();
   const bounds = (await drawer.boundingBox())!;
@@ -1785,7 +1787,7 @@ test("chat history drawer closes after selecting a chat and responds to viewport
   await page.screenshot({ path: "/tmp/omar-history-sidebar-mobile.png" });
   await drawer.getByRole("button", { name: "+ New chat", exact: true }).click();
   await expect(drawer).toBeHidden();
-  await expect(page.getByRole("button", { name: "Chat history" })).toBeFocused();
+  await expect(page.getByRole("button", { name: "Open chat history" })).toBeFocused();
   await page.setViewportSize({ width: 1440, height: 900 });
   await expect(page.getByRole("complementary", { name: "Chat history" })).toBeVisible();
   await page.getByLabel("Describe a workflow").fill("Composer remains usable beside history");
