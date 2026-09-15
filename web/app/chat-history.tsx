@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, type RefObject } from "react";
 import type { ConversationSummary } from "./lib/protocol";
 import { fetchConversations, selectConversation } from "./lib/runtime-client";
 
@@ -14,13 +14,26 @@ export function useHistoryDrawer() {
   return useSyncExternalStore(subscribeViewport, () => window.matchMedia(mobileQuery).matches, () => false);
 }
 
-export function ChatHistory({ serveUrl, busy, mobile, revision, onClose, onSelect }: {
+export function SidebarIcon({ direction }: { direction: "open" | "close" }) {
+  return (
+    <svg className="sidebar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M9 4v16" />
+      {direction === "open" ? <path d="m12 9 3 3-3 3" /> : <path d="m14 9-3 3 3 3" />}
+    </svg>
+  );
+}
+
+export function ChatHistory({ serveUrl, busy, mobile, revision, collapsed, onClose, onOpen, onSelect, railButtonRef }: {
   serveUrl: string;
   busy: boolean;
   mobile: boolean;
   revision: string;
+  collapsed: boolean;
   onClose: () => void;
+  onOpen: () => void;
   onSelect: (conversation: ConversationSummary) => void;
+  railButtonRef: RefObject<HTMLButtonElement | null>;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [chats, setChats] = useState<ConversationSummary[]>([]);
@@ -85,10 +98,27 @@ export function ChatHistory({ serveUrl, busy, mobile, revision, onClose, onSelec
   }
 
   const visible = chats.filter((chat) => chat.title.toLowerCase().includes(query.toLowerCase()));
+  if (collapsed) {
+    return (
+      <nav className="history-rail" aria-label="Chat navigation">
+        <button
+          ref={railButtonRef}
+          type="button"
+          onClick={onOpen}
+          aria-label="Open chat history"
+          title="Open sidebar"
+        >
+          <SidebarIcon direction="open" />
+        </button>
+      </nav>
+    );
+  }
   const content = <>
     <header>
       <h2 id="chat-history-title">Recent chats</h2>
-      <button type="button" onClick={onClose} aria-label="Close chat history">×</button>
+      <button type="button" className="history-fold" onClick={onClose} aria-label="Fold chat history" title="Fold sidebar">
+        <SidebarIcon direction="close" />
+      </button>
     </header>
     <div className="history-actions">
       <button type="button" disabled={busy || loading || switching} onClick={() => void select()}>+ New chat</button>
