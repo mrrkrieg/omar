@@ -505,6 +505,8 @@ test("the source view highlights OMAR, and its pane can be hidden", async ({
 });
 
 test("the columns can be resized from either divider", async ({ page }) => {
+  // Leave room for history plus all three resizable workspace panes.
+  await page.setViewportSize({ width: 1440, height: 900 });
   await useFakeServe(page);
   await draftUntilProposed(page);
 
@@ -589,25 +591,25 @@ test("dragging a panel away collapses it, and its divider brings it back", async
   expect((await conversation.boundingBox())!.width).toBeGreaterThan(200);
 });
 
-test("the conversation owns the window until a design splits it", async ({
+test("the conversation owns the workspace until a design splits it", async ({
   page,
 }) => {
   await useFakeServe(page);
 
   // Nothing to show beside the conversation yet.
   const conversation = page.locator(".builder-panel");
-  const viewport = page.viewportSize()!;
+  const workspace = (await page.locator(".workspace").boundingBox())!;
   expect((await conversation.boundingBox())!.width).toBeGreaterThan(
-    viewport.width - 40,
+    workspace.width - 40,
   );
   await expect(page.locator(".diagram-panel")).toHaveCount(0);
 
   await draftUntilProposed(page);
 
-  // The first design splits the window down the middle, diagram on the right.
+  // The first design splits the workspace down the middle, diagram on the right.
   const conversationBox = (await conversation.boundingBox())!;
   const diagramBox = (await page.locator(".diagram-panel").boundingBox())!;
-  expect(Math.abs(conversationBox.width - viewport.width / 2)).toBeLessThan(60);
+  expect(Math.abs(conversationBox.width - workspace.width / 2)).toBeLessThan(60);
   expect(diagramBox.x).toBeGreaterThan(conversationBox.x);
   // And it is a pure diagram: the source pane waits behind its handle.
   await expect(page.locator(".inspector-panel")).toBeHidden();
@@ -653,7 +655,8 @@ test("the studio opens on a centred prompt, then settles into a thread", async (
   const message = (await page.locator(".message").first().boundingBox())!;
   expect(message.width).toBeLessThan(viewport.width * 0.6);
   const messageCentre = message.x + message.width / 2;
-  expect(Math.abs(messageCentre - viewport.width / 2)).toBeLessThan(40);
+  const workspace = (await page.locator(".workspace").boundingBox())!;
+  expect(Math.abs(messageCentre - (workspace.x + workspace.width / 2))).toBeLessThan(40);
 });
 
 test("the workflow's buttons sit with the workflow", async ({ page }) => {
@@ -1663,4 +1666,128 @@ test("a team inside a team is drawn as a box inside a box", async ({ page }) => 
   const wide = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
   const tall = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
   expect(wide > 1 && tall > 1).toBe(false);
+});
+
+test("chat history restores messages and proposals after switching and reloading", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await useFakeServe(page);
+  await draftUntilProposed(page);
+  const history = page.getByRole("complementary", { name: "Chat history" });
+  await expect(history).toBeVisible();
+  const sidebarBounds = (await history.boundingBox())!;
+  const workspaceBounds = (await page.locator(".workspace").boundingBox())!;
+  expect(sidebarBounds.x + sidebarBounds.width).toBeLessThanOrEqual(workspaceBounds.x);
+  await expect(page.getByRole("dialog", { name: "Chat history" })).toHaveCount(0);
+  await expect(history.getByRole("list", { name: "Saved chats" })).toContainText("Review the release plan");
+  await history.getByRole("button", { name: "New chat" }).click();
+  await expect(history).toBeVisible();
+  await expect(page.locator(".messages")).not.toContainText("Review the release plan");
+  await expect(page.getByRole("group", { name: "Deploy design" })).toBeHidden();
+  await page.getByLabel("Describe a workflow").fill("Prepare a product launch");
+  await page.getByLabel("Draft workflow").click();
+  await expect(page.locator(".messages")).toContainText("Which agent should own");
+  await page.reload();
+  await expect(page.locator(".messages")).toContainText("Prepare a product launch");
+  await expect(page.locator(".messages")).not.toContainText("Review the release plan");
+
+  await history.getByLabel("Search chats").fill("release");
+  await expect(history.getByRole("listitem")).toHaveCount(1);
+  await history.getByRole("button", { name: /Review the release plan/ }).click();
+  await expect(page.locator(".messages")).toContainText("The planner");
+  await expect(page.locator(".messages")).not.toContainText("Prepare a product launch");
+  await expect(page.getByRole("group", { name: "Deploy design" })).toBeVisible();
+  await page.getByRole("button", { name: "Show the source pane" }).click();
+  await expect(page.locator(".source-code")).toContainText("team ReviewFlow[");
+  await expect(page.locator(".connection")).toHaveText("review");
+  await page.screenshot({ path: "/tmp/omar-history-sidebar-desktop.png" });
+  expect(errors).toEqual([]);
+  // Merely reopening history must never deploy a saved proposal.
+  const runs = await page.request.get(`${FAKE_SERVE_URL}/v1/runs`);
+  expect((await runs.json()).runs).toHaveLength(0);
+  await page.getByLabel("Describe a workflow").fill("Keep the same requirements and add a final review");
+  await page.getByLabel("Draft workflow").click();
+  await expect(page.locator(".messages")).toContainText("Keep the same requirements");
+  await expect(history.locator('[aria-current="true"]')).toContainText("Review the release plan");
+      await history.getByRole("button", { name: "Fold chat history" }).click();
+  const rail = page.getByRole("navigation", { name: "Chat navigation" });
+    await expect(history).toHaveCount(0);
+  await expect(rail).toBeVisible();
+    await expect(rail.getByRole("button", { name: "Open chat history" })).toBeFocused();
+    await rail.getByRole("button", { name: "Open chat history" }).click();
+  await expect(history).toBeVisible();
+  await expect(page.getByRole("group", { name: "Deploy design" })).toBeVisible();
+});
+
+test("chat history reports load failures and prevents switching during a reply", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await fake.close();
+  fake = (await startFakeServe({ stepMs: 3000, port: FAKE_SERVE_PORT })) as FakeServe;
+  await useFakeServe(page);
+  await page.getByLabel("Describe a workflow").fill("Review the release plan");
+  await page.getByLabel("Draft workflow").click();
+  await page.getByRole("button", { name: "Open chat history" }).click();
+  const history = page.getByRole("dialog", { name: "Chat history" });
+  await expect(history.getByRole("button", { name: "New chat" })).toBeDisabled();
+  await expect(history).toContainText("Wait for the current reply");
+  const bounds = (await history.boundingBox())!;
+  expect(bounds.x).toBeGreaterThanOrEqual(0);
+  expect(bounds.x + bounds.width).toBeLessThanOrEqual(390);
+  await page.keyboard.press("Escape");
+  await expect(history).toBeHidden();
+  await expect(page.getByRole("button", { name: "Open chat history" })).toBeFocused();
+  await page.route("**/v1/chats", (route) => route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "Cannot read saved chats" }) }));
+  await page.getByRole("button", { name: "Open chat history" }).click();
+  await expect(history.getByRole("alert")).toContainText("Cannot read saved chats");
+  await page.unroute("**/v1/chats");
+  await history.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(history.getByRole("alert")).toBeHidden();
+  await expect(history.getByRole("list", { name: "Saved chats" })).toContainText("Review the release plan");
+});
+
+
+test("chat history sidebar follows selections in another tab and refreshes recent chats", async ({ page, context }) => {
+  await useFakeServe(page);
+  await draftUntilProposed(page);
+  const history = page.getByRole("complementary", { name: "Chat history" });
+  await expect(history.locator('[aria-current="true"]')).toContainText("Review the release plan");
+  const second = await context.newPage();
+  try {
+    await useFakeServe(second);
+    await second.getByRole("complementary", { name: "Chat history" }).getByRole("button", { name: "+ New chat", exact: true }).click();
+    await expect(history.locator('[aria-current="true"]')).toContainText("New chat");
+    await expect(page.locator(".messages")).not.toContainText("Review the release plan");
+    await second.getByLabel("Describe a workflow").fill("Plan the next release");
+    await second.getByLabel("Draft workflow").click();
+    await expect(history.locator('[aria-current="true"]')).toContainText("Plan the next release");
+    await expect(history.getByRole("listitem").first()).toContainText("Plan the next release");
+    await expect(history.locator('[aria-current="true"]')).toContainText("3 messages");
+    await history.getByLabel("Search chats").fill("nothing matches");
+    await expect(history).toContainText("No chats found");
+    await history.getByLabel("Search chats").fill("");
+    await expect(history.getByRole("listitem")).toHaveCount(2);
+  } finally { await second.close(); }
+});
+
+test("chat history drawer closes after selecting a chat and responds to viewport changes", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await useFakeServe(page);
+  await expect(page.getByRole("dialog", { name: "Chat history" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Open chat history" }).click();
+  const drawer = page.getByRole("dialog", { name: "Chat history" });
+  await expect(drawer).toBeVisible();
+  const bounds = (await drawer.boundingBox())!;
+  expect(bounds.x).toBe(0);
+  expect(bounds.width).toBeLessThan(390);
+  await expect(drawer.getByRole("list", { name: "Saved chats" })).not.toBeEmpty();
+  await page.screenshot({ path: "/tmp/omar-history-sidebar-mobile.png" });
+  await drawer.getByRole("button", { name: "+ New chat", exact: true }).click();
+  await expect(drawer).toBeHidden();
+  await expect(page.getByRole("button", { name: "Open chat history" })).toBeFocused();
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await expect(page.getByRole("complementary", { name: "Chat history" })).toBeVisible();
+  await page.getByLabel("Describe a workflow").fill("Composer remains usable beside history");
+  await expect(page.getByLabel("Describe a workflow")).toBeFocused();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByRole("dialog", { name: "Chat history" })).toHaveCount(0);
 });

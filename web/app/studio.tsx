@@ -2,6 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChatMessage as ChatMessageView } from "./chat-message";
+import { ChatHistory, useHistoryDrawer } from "./chat-history";
 import { AgentTerminal } from "./agent-terminal";
 import { Timeline } from "./timeline";
 import { BackendMenu } from "./backend-menu";
@@ -22,6 +23,7 @@ import {
   isRunFinished,
   openInputs,
   type ChatMessage,
+  type ConversationSummary,
   type DiagramEvent,
   type DiagramSnapshot,
   type PendingInvocation,
@@ -138,6 +140,28 @@ export function Studio({
   const [selection, setSelection] = useState<string[]>([]);
   /** The agent whose terminal is open, if any. */
   const [terminalAgent, setTerminalAgent] = useState<string | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(true);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [historyRevision, setHistoryRevision] = useState(0);
+  const historyButtonRef = useRef<HTMLButtonElement>(null);
+    const historyRailButtonRef = useRef<HTMLButtonElement>(null);
+  const historyDrawer = useHistoryDrawer();
+  const historyVisible = !isDemo && (historyDrawer ? drawerOpen : historyOpen);
+  function closeHistory() {
+    if (historyDrawer) setDrawerOpen(false);
+    else setHistoryOpen(false);
+    historyButtonRef.current?.focus();
+  }
+    function openHistory() {
+    if (historyDrawer) setDrawerOpen(true);
+    else setHistoryOpen(true);
+  }
+  useEffect(() => {
+    if (!isDemo && !historyDrawer && !historyOpen) historyRailButtonRef.current?.focus();
+  }, [historyDrawer, historyOpen, isDemo]);
+const [chatEpoch, setChatEpoch] = useState(0);
+  const conversationIdRef = useRef<string | null>(null);
+  const [conversationTitle, setConversationTitle] = useState("What should the team do?");
   /** The web agent whose port panel is open. A program may declare several,
       each with its own ports and prompts, so this names one rather than
       merging them into a shared view. */
@@ -234,11 +258,50 @@ export function Studio({
     [designAgent, isDemo, serveUrl],
   );
 
+  const restoreConversation = useCallback((conversation: ConversationSummary) => {
+    setHistoryRevision((current) => current + 1);
+    setConversationTitle(conversation.message_count ? conversation.title : "What should the team do?");
+    if (conversationIdRef.current === conversation.id) return;
+    conversationIdRef.current = conversation.id;
+    disconnectRef.current?.();
+    disconnectRef.current = null;
+    checkTokenRef.current += 1;
+    runRef.current = null;
+    setMessages([]);
+    setRun(null);
+    setEvents([]);
+    setPending([]);
+    setDesign(null);
+    setSnapshot(null);
+    setSource("");
+    setFilename("program.omar");
+    setSourceErrors([]);
+    setSelection([]);
+    setConfirming(false);
+    setPhase("idle");
+    setPrompt("");
+    setError("");
+    setTerminalAgent(null);
+    setPanelAgent(null);
+    setSteps([]);
+    setStepIndex(0);
+    setTimelineOpen(false);
+    setTab("source");
+    arrangedRef.current = false;
+    setBuilderWidth(DEFAULT_BUILDER);
+    setInspectorWidth(DEFAULT_INSPECTOR);
+  }, []);
+
   // The conversation is owned by the runtime, not this component: the stream
   // replays history on connect, so a reload rejoins rather than starting over.
   useEffect(() => {
+    let subscribedId: string | undefined;
     const unsubscribe = agent.subscribe(
       (message) => {
+        if (subscribedId && subscribedId !== conversationIdRef.current) return;
+        if (message.role === "operator") {
+          setConversationTitle((title) => title === "What should the team do?" ? message.text.replace(/\s+/g, " ").slice(0, 80) : title);
+        }
         setMessages((current) =>
           current.some((seen) => seen.sequence === message.sequence)
             ? current
@@ -275,6 +338,10 @@ export function Studio({
       () => {
         /* daemon health is polled separately */
       },
+      (conversation) => {
+        subscribedId = conversation.id;
+        restoreConversation(conversation);
+      },
     );
     // Clear on teardown rather than on subscribe: transcripts belong to an
     // agent, and setting state synchronously in an effect cascades renders.
@@ -282,7 +349,7 @@ export function Studio({
       unsubscribe();
       setMessages([]);
     };
-  }, [agent]);
+  }, [agent, chatEpoch, restoreConversation]);
 
   useEffect(() => {
     const thread = threadRef.current;
@@ -312,7 +379,8 @@ export function Studio({
   const loadPanel = useCallback(
     async (runId: string) => {
       try {
-        setPending(await fetchPanel(serveUrl, runId));
+        const next = await fetchPanel(serveUrl, runId);
+        if (runRef.current?.run_id === runId) setPending(next);
       } catch {
         // A panel that cannot be read is not a run that has failed. The next
         // event asks again.
@@ -348,9 +416,11 @@ export function Studio({
     (record: RunRecord) => {
       const diagramUrl = diagramUrlFor(record);
       disconnectRef.current?.();
+      let connected = true;
 
       const refresh = async () => {
-        setSnapshot(await fetchDiagram(diagramUrl));
+        const next = await fetchDiagram(diagramUrl);
+        if (connected) setSnapshot(next);
       };
       void refresh().catch(() => {
         /* the SSE stream reports connection loss */
@@ -364,6 +434,7 @@ export function Studio({
       const settle = async () => {
         for (let attempt = 0; attempt < 10; attempt += 1) {
           const latest = await fetchRun(serveUrl, record.run_id).catch(() => null);
+          if (!connected) return;
           if (latest) {
             setRun(latest);
             if (isRunFinished(latest.status)) {
@@ -378,9 +449,10 @@ export function Studio({
         }
       };
 
-      disconnectRef.current = subscribeToDiagram(
+      const unsubscribe = subscribeToDiagram(
         diagramUrl,
         (event) => {
+          if (!connected) return;
           setEvents((current) => [event, ...current].slice(0, 8));
           // A live run walks the same list the projection drew. Matched on the
           // tag rather than counted, so a run that reaches a tag the projection
@@ -429,6 +501,10 @@ export function Studio({
         // expected at the end rather than an error. Ask serve what happened.
         () => void settle(),
       );
+      disconnectRef.current = () => {
+        connected = false;
+        unsubscribe();
+      };
     },
     [serveUrl, loadPanel],
   );
@@ -444,6 +520,7 @@ export function Studio({
       const record = await startRun(serveUrl, {
         program: source,
         inputs: design.inputs,
+        conversation_id: conversationIdRef.current ?? undefined,
       });
       setSnapshot((current) => (current ? { ...current, team: record.team } : current));
       setRun(record);
@@ -645,12 +722,47 @@ export function Studio({
             {daemon.state === "demo" ? "demo topology" : serveUrl}
             {daemon.state === "offline" ? " · unreachable" : null}
           </span>
+                    {!isDemo && historyDrawer ? (
+            <button
+              type="button"
+              ref={historyButtonRef}
+              className="history-button"
+              onClick={() => historyDrawer ? setDrawerOpen((open) => !open) : setHistoryOpen((open) => !open)}
+              aria-expanded={historyVisible}
+              aria-controls="chat-history"
+              aria-haspopup={historyDrawer ? "dialog" : undefined}
+                            aria-label="Open chat history"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
+                <path d="M3 11a9 9 0 1 1 2.6 7M3 4v7h7M12 7v5l3 2" />
+              </svg>
+              History
+            </button>
+          ) : null}
           <span className="connection" data-phase={phase}>
             {phase}
           </span>
         </div>
       </header>
 
+      <div className="studio-content">
+                {!isDemo && (!historyDrawer || drawerOpen) ? (
+          <ChatHistory
+            serveUrl={serveUrl}
+            busy={phase === "drafting" || phase === "spawning" || (run !== null && !isRunFinished(run.status))}
+            mobile={historyDrawer}
+            revision={`${historyRevision}:${messages.length}`}
+                        collapsed={!historyDrawer && !historyOpen}
+            onClose={closeHistory}
+                        onOpen={openHistory}
+            railButtonRef={historyRailButtonRef}
+            onSelect={(conversation) => {
+              restoreConversation(conversation);
+              setChatEpoch((current) => current + 1);
+              if (historyDrawer) setDrawerOpen(false);
+            }}
+          />
+        ) : null}
       <section
         ref={workspaceRef}
         className="workspace"
@@ -671,7 +783,7 @@ export function Studio({
           <div className="panel-heading">
             <div>
               <span className="eyebrow">WORKFLOW BUILDER</span>
-              <h1>What should the team do?</h1>
+              <h1>{conversationTitle}</h1>
             </div>
           </div>
           <div className="messages" ref={threadRef}>
@@ -950,6 +1062,7 @@ export function Studio({
         </aside>
         ) : null}
       </section>
+      </div>
 
       {panelAgent && snapshot ? (
         <PortPanel
