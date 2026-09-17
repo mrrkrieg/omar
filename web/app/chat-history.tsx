@@ -14,6 +14,12 @@ export function useHistoryDrawer() {
   return useSyncExternalStore(subscribeViewport, () => window.matchMedia(mobileQuery).matches, () => false);
 }
 
+export function OmarLogo() {
+  // Static artwork needs no image loader or remote request.
+  // eslint-disable-next-line @next/next/no-img-element
+  return <img className="brand-mark" src="/omar-logo.png" alt="Omar" width={40} height={40} />;
+}
+
 export function SidebarIcon({ direction }: { direction: "open" | "close" }) {
   return (
     <svg className="sidebar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
@@ -24,20 +30,20 @@ export function SidebarIcon({ direction }: { direction: "open" | "close" }) {
   );
 }
 
-export function ChatHistory({ serveUrl, busy, mobile, revision, collapsed, onClose, onOpen, onSelect, railButtonRef }: {
+export function ChatHistory({ serveUrl, activeId, mobile, revision, collapsed, onClose, onOpen, onSelect, onSwitchingChange, railButtonRef }: {
   serveUrl: string;
-  busy: boolean;
+  activeId: string;
   mobile: boolean;
   revision: string;
   collapsed: boolean;
   onClose: () => void;
   onOpen: () => void;
   onSelect: (conversation: ConversationSummary) => void;
+  onSwitchingChange: (switching: boolean) => void;
   railButtonRef: RefObject<HTMLButtonElement | null>;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [chats, setChats] = useState<ConversationSummary[]>([]);
-  const [activeId, setActiveId] = useState("");
   const [loading, setLoading] = useState(true);
   const [switching, setSwitching] = useState(false);
   const [error, setError] = useState("");
@@ -61,11 +67,10 @@ export function ChatHistory({ serveUrl, busy, mobile, revision, collapsed, onClo
   // after chat-stream changes, including selections made in another tab.
   useEffect(() => {
     const abort = new AbortController();
-    const timer = setTimeout(() => {
+    const refresh = () => {
       void fetchConversations(serveUrl, abort.signal).then((history) => {
         if (abort.signal.aborted) return;
         setChats(history.conversations);
-        setActiveId(history.active_id);
         setError("");
         setLoading(false);
       }).catch((cause) => {
@@ -73,8 +78,10 @@ export function ChatHistory({ serveUrl, busy, mobile, revision, collapsed, onClo
         setError(cause instanceof Error ? cause.message : String(cause));
         setLoading(false);
       });
-    }, 150);
-    return () => { clearTimeout(timer); abort.abort(); };
+    };
+    const timer = setTimeout(refresh, 150);
+    const poll = setInterval(refresh, 2000);
+    return () => { clearTimeout(timer); clearInterval(poll); abort.abort(); };
   }, [serveUrl, revision, retry]);
 
   async function select(id?: string) {
@@ -83,10 +90,10 @@ export function ChatHistory({ serveUrl, busy, mobile, revision, collapsed, onClo
       return;
     }
     setSwitching(true);
+    onSwitchingChange(true);
     setError("");
     try {
       const conversation = await selectConversation(serveUrl, id);
-      setActiveId(conversation.id);
       setQuery("");
       setChats((current) => [conversation, ...current.filter((chat) => chat.id !== conversation.id)]);
       onSelect(conversation);
@@ -94,6 +101,7 @@ export function ChatHistory({ serveUrl, busy, mobile, revision, collapsed, onClo
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setSwitching(false);
+      onSwitchingChange(false);
     }
   }
 
@@ -101,6 +109,7 @@ export function ChatHistory({ serveUrl, busy, mobile, revision, collapsed, onClo
   if (collapsed) {
     return (
       <nav className="history-rail" aria-label="Chat navigation">
+        <OmarLogo />
         <button
           ref={railButtonRef}
           type="button"
@@ -115,29 +124,28 @@ export function ChatHistory({ serveUrl, busy, mobile, revision, collapsed, onClo
   }
   const content = <>
     <header>
-      <h2 id="chat-history-title">Recent chats</h2>
+      <OmarLogo />
       <button type="button" className="history-fold" onClick={onClose} aria-label="Fold chat history" title="Fold sidebar">
         <SidebarIcon direction="close" />
       </button>
     </header>
+    <h2 id="chat-history-title">Recent chats</h2>
     <div className="history-actions">
-      <button type="button" disabled={busy || loading || switching} onClick={() => void select()}>+ New chat</button>
+      <button type="button" disabled={loading || switching} onClick={() => void select()}>+ New chat</button>
       <input aria-label="Search chats" placeholder="Search chats…" value={query} onChange={(event) => setQuery(event.target.value)} />
     </div>
-    {busy ? <p role="status">Wait for the current reply or run to finish before switching chats.</p> : null}
     {error ? <div className="history-error"><p role="alert">{error}</p><button type="button" onClick={() => setRetry((current) => current + 1)}>Retry</button></div> : null}
     <ul aria-label="Saved chats" aria-busy={loading || switching}>
       {visible.map((chat) => (
         <li key={chat.id}>
-          <button type="button" disabled={switching || (busy && chat.id !== activeId)} aria-current={chat.id === activeId ? "true" : undefined} onClick={() => void select(chat.id)}>
+          <button type="button" disabled={switching} aria-current={chat.id === activeId ? "true" : undefined} onClick={() => void select(chat.id)}>
             <span>{chat.title}</span>
-            <small>{chat.message_count} messages · {new Date(chat.updated_at).toLocaleDateString()}{chat.id === activeId ? " · Current" : ""}</small>
+            <small>{new Date(chat.updated_at).toLocaleDateString()}{chat.busy ? " · Thinking" : ""}{chat.run && ["starting", "running", "stopping"].includes(chat.run.status) ? <> · <strong className="chat-running">Running</strong></> : null}</small>
           </button>
         </li>
       ))}
     </ul>
     {loading ? <p role="status">Loading conversations…</p> : visible.length === 0 && !error ? <p>No chats found.</p> : null}
-    <p className="history-footnote">Saved automatically on this runtime.</p>
   </>;
   return mobile ? (
     <dialog id="chat-history" ref={dialogRef} className="chat-history history-drawer" aria-label="Chat history" onCancel={onClose} onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}>
