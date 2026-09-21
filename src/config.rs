@@ -22,6 +22,11 @@ pub struct Config {
 
     #[serde(default)]
     pub slack_bridge: SlackBridgeConfig,
+
+    /// Optional, advisory-only decision support. Individual runs always begin
+    /// in `off`, even when this local API is enabled.
+    #[serde(default)]
+    pub decision_support: DecisionSupportConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -87,6 +92,48 @@ pub struct SlackBridgeConfig {
     /// to the first registered EA. Set via the `/ea <name>` Slack command.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_ea: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DecisionSupportConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_typesafe_base_url")]
+    pub typesafe_base_url: String,
+    #[serde(default = "default_typesafe_model")]
+    pub model: String,
+    #[serde(default = "default_decision_timeout")]
+    pub timeout_seconds: u64,
+    #[serde(default = "default_decision_retention")]
+    pub retention_days: u64,
+}
+
+fn default_typesafe_base_url() -> String {
+    "https://api.typesafe.ai".to_string()
+}
+
+fn default_typesafe_model() -> String {
+    "jev-1.13.0".to_string()
+}
+
+fn default_decision_timeout() -> u64 {
+    3
+}
+
+fn default_decision_retention() -> u64 {
+    14
+}
+
+impl Default for DecisionSupportConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            typesafe_base_url: default_typesafe_base_url(),
+            model: default_typesafe_model(),
+            timeout_seconds: default_decision_timeout(),
+            retention_days: default_decision_retention(),
+        }
+    }
 }
 
 fn default_true() -> bool {

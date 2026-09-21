@@ -26,6 +26,10 @@
 use ts_rs::{Config, TS};
 
 use crate::chat_history::{Conversation, ConversationSummary};
+use crate::decisions::{
+    DecisionCapabilities, DecisionCoverage, DecisionMode, DecisionRecord, DecisionSource,
+    DecisionStatus,
+};
 use crate::diagram::{
     wire_name, DiagramAgent, DiagramEdge, DiagramEvent, DiagramEventKind, DiagramInstance,
     DiagramPort, DiagramReaction, DiagramSnapshot, DiagramStatus, DiagramTag, DiagramTimer,
@@ -142,6 +146,24 @@ fn vocabularies() -> Vec<Vocabulary> {
             "Who spoke.",
             &[ChatRole::Operator, ChatRole::Assistant],
         ),
+        vocabulary(
+            "DECISION_MODES",
+            "DecisionMode",
+            "The advisory mode selected for a run.",
+            &[DecisionMode::Off, DecisionMode::Shadow, DecisionMode::Suggest],
+        ),
+        vocabulary(
+            "DECISION_STATUSES",
+            "DecisionStatus",
+            "The local lifecycle of an advisory evaluation.",
+            &[DecisionStatus::Queued, DecisionStatus::Evaluating, DecisionStatus::Ready, DecisionStatus::Failed],
+        ),
+        vocabulary(
+            "DECISION_COVERAGE",
+            "DecisionCoverage",
+            "Whether the observer saw a complete run event stream.",
+            &[DecisionCoverage::Continuous, DecisionCoverage::Partial, DecisionCoverage::Stale],
+        ),
     ]
 }
 
@@ -189,6 +211,9 @@ pub fn generate() -> String {
         Conversation::decl(&config),
         ConversationSummary::decl(&config),
         RunRecord::decl(&config),
+        DecisionCapabilities::decl(&config),
+        DecisionSource::decl(&config),
+        DecisionRecord::decl(&config),
     ];
     for decl in &mut decls {
         out.push_str("export ");
@@ -218,6 +243,9 @@ mod tests {
             "PortKind",
             "DiagramEventKind",
             "ChatRole",
+            "DecisionMode",
+            "DecisionStatus",
+            "DecisionCoverage",
         ] {
             assert!(
                 generated.contains(&format!("export type {name} = (typeof")),
