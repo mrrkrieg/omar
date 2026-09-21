@@ -236,6 +236,15 @@ mod enabled {
             Ok(Self::with_provider(config, omar_dir, provider))
         }
 
+        #[cfg(test)]
+        fn with_test_provider(
+            config: DecisionSupportConfig,
+            omar_dir: &Path,
+            provider: Arc<dyn Provider>,
+        ) -> Self {
+            Self::with_provider(config, omar_dir, provider)
+        }
+
         fn with_provider(
             config: DecisionSupportConfig,
             omar_dir: &Path,
@@ -771,6 +780,36 @@ mod enabled {
     #[cfg(test)]
     mod tests {
         use super::*;
+        use tempfile::tempdir;
+
+        struct FakeProvider;
+
+        impl Provider for FakeProvider {
+            fn evaluate(&self, _selected: &str) -> Result<ProviderResponse> {
+                Ok(ProviderResponse {
+                    model: "jev-1.13.0".to_string(),
+                    answers: vec![
+                        ProviderAnswer {
+                            question_id: "owner".to_string(),
+                            selected: Some("backend".to_string()),
+                            probabilities: BTreeMap::from([
+                                ("backend".to_string(), 0.95),
+                                ("frontend".to_string(), 0.05),
+                            ]),
+                        },
+                        ProviderAnswer {
+                            question_id: "sufficient_context".to_string(),
+                            selected: Some("true".to_string()),
+                            probabilities: BTreeMap::from([
+                                ("true".to_string(), 0.95),
+                                ("false".to_string(), 0.05),
+                            ]),
+                        },
+                    ],
+                })
+            }
+        }
+
         #[test]
         fn unicode_ranges_are_scalar_offsets() {
             assert_eq!(unicode_slice("aé🙂z", 1, 3).unwrap(), "é🙂");
@@ -802,6 +841,68 @@ mod enabled {
                 policy(validate_response(response).unwrap()).suggestion,
                 "needs_review"
             );
+        }
+
+        #[test]
+        fn off_is_inert_and_selected_source_is_bound_by_digest() {
+            let dir = tempdir().unwrap();
+            let service = DecisionService::with_test_provider(
+                DecisionSupportConfig {
+                    enabled: true,
+                    ..DecisionSupportConfig::default()
+                },
+                dir.path(),
+                Arc::new(FakeProvider),
+            );
+            assert!(service
+                .capture("run", "reaction::review", "review", "review text")
+                .unwrap()
+                .is_none());
+            assert!(!service.state.lock().unwrap().workers_started);
+            service.set_mode("run", DecisionMode::Suggest).unwrap();
+            let source = service
+                .capture("run", "reaction::review", "review", "review text")
+                .unwrap()
+                .unwrap();
+            let rejected = service.evaluate(
+                "run",
+                EvaluateRequest {
+                    request_id: "bad".to_string(),
+                    profile_id: "review-owner-v1".to_string(),
+                    source_id: source.source_id.clone(),
+                    source_sha256: "wrong".to_string(),
+                    selection_start: 0,
+                    selection_end: 6,
+                },
+            );
+            assert!(rejected.is_err());
+            service
+                .evaluate(
+                    "run",
+                    EvaluateRequest {
+                        request_id: "bound".to_string(),
+                        profile_id: "review-owner-v1".to_string(),
+                        source_id: source.source_id.clone(),
+                        source_sha256: source.sha256.clone(),
+                        selection_start: 0,
+                        selection_end: 6,
+                    },
+                )
+                .unwrap();
+            let mut records = Vec::new();
+            for _ in 0..50 {
+                records = service.decisions("run").0;
+                if records[0].status == DecisionStatus::Ready {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            assert_eq!(records[0].suggestion, "backend");
+            assert!(dir
+                .path()
+                .join("decisions/run")
+                .join(format!("source-{}.json", source.source_id))
+                .exists());
         }
     }
 
