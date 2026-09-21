@@ -1182,7 +1182,7 @@ function StudioWorkspace({ serveUrl = "", historyUrl, designAgent, selectedId, o
                 Events
               </button>
             ) : null}
-            {run && decisionCapabilities ? (
+            {run && decisionCapabilities?.configured ? (
               <button
                 role="tab"
                 aria-selected={tab === "suggestions"}
@@ -1204,7 +1204,7 @@ function StudioWorkspace({ serveUrl = "", historyUrl, designAgent, selectedId, o
               onSourceChange={setSource}
               onFilenameChange={setFilename}
             />
-          ) : tab === "suggestions" && run && decisionCapabilities ? (
+          ) : tab === "suggestions" && run && decisionCapabilities?.configured ? (
             <Suggestions serveUrl={serveUrl} runId={run.run_id} capabilities={decisionCapabilities} />
           ) : (
             <div className="event-strip" role="tabpanel">

@@ -32,6 +32,18 @@ export type DiagramEventKind = (typeof DIAGRAM_EVENT_KINDS)[number];
 export const CHAT_ROLES = ["operator", "assistant"] as const;
 export type ChatRole = (typeof CHAT_ROLES)[number];
 
+/** The advisory mode selected for a run. */
+export const DECISION_MODES = ["off", "shadow", "suggest"] as const;
+export type DecisionMode = (typeof DECISION_MODES)[number];
+
+/** The local lifecycle of an advisory evaluation. */
+export const DECISION_STATUSES = ["queued", "evaluating", "ready", "failed"] as const;
+export type DecisionStatus = (typeof DECISION_STATUSES)[number];
+
+/** Whether the observer saw a complete run event stream. */
+export const DECISION_COVERAGE = ["continuous", "partial", "stale"] as const;
+export type DecisionCoverage = (typeof DECISION_COVERAGE)[number];
+
 export type DiagramTag = { timestamp: number, microstep: number, };
 
 export type DiagramInstance = { id: string, name: string, 
@@ -120,4 +132,15 @@ export type Conversation = { id: string, title: string, ea_id: number | null, cr
 export type ConversationSummary = { id: string, title: string, created_at: number, updated_at: number, message_count: number, ea_id: number | null, busy: boolean, run: RunRecord | null, };
 
 export type RunRecord = { run_id: string, team: string, status: RunStatus, diagram_address: string | null, started_at: number, finished_at: number | null, error: string | null, };
+
+export type DecisionCapabilities = { available: boolean, configured: boolean, model: string, modes: Array<DecisionMode>, max_requests_per_run: number, max_source_bytes: number, };
+
+export type DecisionSource = { source_id: string, run_id: string, reaction_id: string, port: string, sha256: string, captured_at: number, coverage: DecisionCoverage, 
+/**
+ * Kept on the loopback-only local API so the operator can select the
+ * exact excerpt to evaluate. It is never sent until explicitly selected.
+ */
+text: string, };
+
+export type DecisionRecord = { decision_id: string, request_id: string, run_id: string, source_id: string, source_sha256: string, profile_id: string, mode: DecisionMode, status: DecisionStatus, coverage: DecisionCoverage, freshness: string, reason_code: string, suggestion: string, confidence: number, selected_probability: number, model: string | null, created_at: number, completed_at: number | null, error: string | null, };
 

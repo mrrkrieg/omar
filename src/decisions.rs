@@ -137,7 +137,7 @@ mod enabled {
         answers: Vec<ProviderAnswer>,
     }
 
-    pub trait Provider: Send + Sync {
+    trait Provider: Send + Sync {
         fn evaluate(&self, selected: &str) -> Result<ProviderResponse>;
     }
 
@@ -234,15 +234,6 @@ mod enabled {
         pub fn new(config: DecisionSupportConfig, omar_dir: &Path) -> Result<Self> {
             let provider = Arc::new(TypeSafeProvider::new(&config)?);
             Ok(Self::with_provider(config, omar_dir, provider))
-        }
-
-        #[cfg(test)]
-        fn with_test_provider(
-            config: DecisionSupportConfig,
-            omar_dir: &Path,
-            provider: Arc<dyn Provider>,
-        ) -> Self {
-            Self::with_provider(config, omar_dir, provider)
         }
 
         fn with_provider(
@@ -788,7 +779,24 @@ mod enabled {
         fn conservative_policy_needs_three_high_confidence_signals() {
             let response = ProviderResponse {
                 model: "jev-1.13.0".to_string(),
-                answers: vec![ProviderAnswer { question_id: "owner".to_string(), selected: Some("backend".to_string()), probabilities: BTreeMap::from([("backend".to_string(), 0.91), ("frontend".to_string(), 0.09)]) }, ProviderAnswer { question_id: "sufficient_context".to_string(), selected: Some("true".to_string()), probabilities: BTreeMap::from([("true".to_string(), 0.89), ("false".to_string(), 0.11)]) }],
+                answers: vec![
+                    ProviderAnswer {
+                        question_id: "owner".to_string(),
+                        selected: Some("backend".to_string()),
+                        probabilities: BTreeMap::from([
+                            ("backend".to_string(), 0.91),
+                            ("frontend".to_string(), 0.09),
+                        ]),
+                    },
+                    ProviderAnswer {
+                        question_id: "sufficient_context".to_string(),
+                        selected: Some("true".to_string()),
+                        probabilities: BTreeMap::from([
+                            ("true".to_string(), 0.89),
+                            ("false".to_string(), 0.11),
+                        ]),
+                    },
+                ],
             };
             assert_eq!(
                 policy(validate_response(response).unwrap()).suggestion,
