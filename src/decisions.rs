@@ -121,6 +121,7 @@ mod enabled {
     const MAX_SOURCE_BYTES: usize = 64 * 1024;
     const MAX_SELECTION_BYTES: usize = 16 * 1024;
     const QUEUE_DEPTH: usize = 32;
+    const JEV_MODEL: &str = "jev-1.13.0";
 
     #[derive(Debug, Clone, Deserialize)]
     struct ProviderAnswer {
@@ -160,7 +161,7 @@ mod enabled {
                     "{}/v1/systemone",
                     config.typesafe_base_url.trim_end_matches('/')
                 ),
-                model: config.model.clone(),
+                model: JEV_MODEL.to_string(),
             })
         }
     }
@@ -266,7 +267,7 @@ mod enabled {
             DecisionCapabilities {
                 available: true,
                 configured: self.config.enabled,
-                model: self.config.model.clone(),
+                model: JEV_MODEL.to_string(),
                 modes: vec![
                     DecisionMode::Off,
                     DecisionMode::Shadow,
@@ -641,7 +642,7 @@ mod enabled {
     }
 
     fn validate_response(response: ProviderResponse) -> Result<ProviderResponse> {
-        if response.model != "jev-1.13.0" {
+        if response.model != JEV_MODEL {
             anyhow::bail!("unexpected model resolution")
         }
         if response.answers.len() != 2 {

@@ -100,8 +100,6 @@ pub struct DecisionSupportConfig {
     pub enabled: bool,
     #[serde(default = "default_typesafe_base_url")]
     pub typesafe_base_url: String,
-    #[serde(default = "default_typesafe_model")]
-    pub model: String,
     #[serde(default = "default_decision_timeout")]
     pub timeout_seconds: u64,
     #[serde(default = "default_decision_retention")]
@@ -110,10 +108,6 @@ pub struct DecisionSupportConfig {
 
 fn default_typesafe_base_url() -> String {
     "https://api.typesafe.ai".to_string()
-}
-
-fn default_typesafe_model() -> String {
-    "jev-1.13.0".to_string()
 }
 
 fn default_decision_timeout() -> u64 {
@@ -129,7 +123,6 @@ impl Default for DecisionSupportConfig {
         Self {
             enabled: false,
             typesafe_base_url: default_typesafe_base_url(),
-            model: default_typesafe_model(),
             timeout_seconds: default_decision_timeout(),
             retention_days: default_decision_retention(),
         }

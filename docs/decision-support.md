@@ -13,8 +13,7 @@ configuration. The per-run mode still defaults to `off`.
 ```toml
 [decision_support]
 enabled = true
-# `jev-1.13.0` and a three-second timeout are the defaults.
-model = "jev-1.13.0"
+# Jev is pinned to `jev-1.13.0`; three seconds is the default timeout.
 timeout_seconds = 3
 ```
 
