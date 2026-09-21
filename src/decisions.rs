@@ -5,6 +5,11 @@
 //! suggestion, but it cannot write a port, send an agent message, or change a
 //! run's lifecycle.
 
+// The protocol-generation test exports these feature-gated wire types from a
+// default build. Outside that test, the disabled feature deliberately leaves
+// them unused; suppress only that expected configuration's dead-code lint.
+#![cfg_attr(not(feature = "decision-support"), allow(dead_code))]
+
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use ts_rs::TS;

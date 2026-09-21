@@ -16,7 +16,7 @@ async function readError(response: Response): Promise<string> {
 
 export async function fetchDecisionCapabilities(serveUrl: string): Promise<DecisionCapabilities | null> {
   const response = await fetch(`${normalizeRuntimeUrl(serveUrl)}/v1/assist/capabilities`);
-  if (response.status === 404) return null;
+  if (response.status === 204 || response.status === 404) return null;
   if (!response.ok) throw new Error(await readError(response));
   return (await response.json()) as DecisionCapabilities;
 }

@@ -829,6 +829,12 @@ fn handle_client(mut stream: TcpStream, workspaces: Arc<Workspaces>) -> Result<(
         }
         #[cfg(feature = "decision-support")]
         ("GET", "/v1/assist/capabilities") => (200, json!(context.decisions.capabilities())),
+        // A daemon built from this source without the optional feature still
+        // answers the discovery probe successfully. Older daemons have no
+        // route and return 404, which the browser also treats as unavailable;
+        // 204 avoids a browser console resource error for this known build.
+        #[cfg(not(feature = "decision-support"))]
+        ("GET", "/v1/assist/capabilities") => (204, json!({})),
         #[cfg(feature = "decision-support")]
         ("POST", rest) if rest.starts_with("/v1/assist/runs/") && rest.ends_with("/mode") => {
             if origin_header
