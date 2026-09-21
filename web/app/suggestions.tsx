@@ -65,7 +65,7 @@ export function Suggestions({ serveUrl, runId, capabilities }: Props) {
       await evaluateDecision(serveUrl, runId, {
         request_id: crypto.randomUUID(), profile_id: "review-owner-v1",
         source_id: source.source_id, source_sha256: source.sha256,
-        selection_start: start, selection_end: end,
+        selection: { start, end },
       });
       setMessage("Evaluation queued.");
       await refresh();

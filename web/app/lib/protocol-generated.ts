@@ -152,6 +152,8 @@ sequence: number, port: string, sha256: string, captured_at: number, coverage: D
  */
 text: string, };
 
+export type DecisionSelection = { start: number, end: number, };
+
 export type DecisionRecord = { schema_version: number, decision_id: string, request_id: string,
 /**
  * Stable binding of the idempotency key to the selected source and scalar
@@ -161,7 +163,7 @@ request_fingerprint: string,
 /**
  * Unicode scalar offsets into the persisted source excerpt.
  */
-selection_start: number, selection_end: number, run_id: string, source_id: string, source_sha256: string,
+selection: DecisionSelection, run_id: string, source_id: string, source_sha256: string,
 /**
  * Immutable source provenance copied into the decision record so a
  * persisted card remains explainable without a live topology.

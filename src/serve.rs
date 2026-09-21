@@ -1572,6 +1572,7 @@ fn assist_set_mode(context: &Arc<Context_>, route: &str, body: &[u8]) -> (u16, V
     #[derive(Deserialize)]
     struct Request {
         mode: DecisionMode,
+        profile_id: String,
     }
     let request: Request = match serde_json::from_slice(body) {
         Ok(value) => value,
@@ -1587,7 +1588,11 @@ fn assist_set_mode(context: &Arc<Context_>, route: &str, body: &[u8]) -> (u16, V
             None => return (404, json!({"error": "unknown run"})),
         }
     };
-    if let Err(error) = context.decisions.set_mode(run_id, request.mode) {
+    if let Err(error) =
+        context
+            .decisions
+            .set_mode_for_profile(run_id, request.mode, &request.profile_id)
+    {
         return assist_error(error.to_string());
     }
     if request.mode != DecisionMode::Off {
@@ -1734,6 +1739,7 @@ fn assist_error(error: String) -> (u16, Value) {
         404
     } else if error.contains("digest")
         || error.contains("already bound")
+        || error.contains("stale")
         || error.contains("suggestions are not active")
     {
         409

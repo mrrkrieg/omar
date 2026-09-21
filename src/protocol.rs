@@ -27,8 +27,8 @@ use ts_rs::{Config, TS};
 
 use crate::chat_history::{Conversation, ConversationSummary};
 use crate::decisions::{
-    DecisionCapabilities, DecisionCoverage, DecisionMode, DecisionRecord, DecisionSource,
-    DecisionStatus,
+    DecisionCapabilities, DecisionCoverage, DecisionMode, DecisionRecord, DecisionSelection,
+    DecisionSource, DecisionStatus,
 };
 use crate::diagram::{
     wire_name, DiagramAgent, DiagramEdge, DiagramEvent, DiagramEventKind, DiagramInstance,
@@ -223,6 +223,7 @@ pub fn generate() -> String {
         RunRecord::decl(&config),
         DecisionCapabilities::decl(&config),
         DecisionSource::decl(&config),
+        DecisionSelection::decl(&config),
         DecisionRecord::decl(&config),
     ];
     for decl in &mut decls {

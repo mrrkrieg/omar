@@ -59,7 +59,8 @@ lower-confidence responses become `needs_review`.
 
 Every source and decision record has `schema_version: 1`. Decision records
 retain the source reaction, invocation, event sequence, port, profile and
-policy hashes, requested/resolved model, selected scalar range, normalized
+policy hashes, requested/resolved model, selected half-open Unicode-scalar
+range (`selection: { start, end }`), normalized
 scores, timestamps, latency when known, and an explicit lifecycle state:
 `queued`, `evaluating`, `suggested`, `needs_review`, `unavailable`, or
 `cancelled`. The `freshness` value is `current`, `superseded`, `historical`, or

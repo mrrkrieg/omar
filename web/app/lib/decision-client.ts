@@ -23,7 +23,8 @@ export async function fetchDecisionCapabilities(serveUrl: string): Promise<Decis
 
 export async function setDecisionMode(serveUrl: string, runId: string, mode: DecisionMode): Promise<void> {
   const response = await fetch(`${normalizeRuntimeUrl(serveUrl)}/v1/assist/runs/${encodeURIComponent(runId)}/mode`, {
-    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ mode }),
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ mode, profile_id: "review-owner-v1" }),
   });
   if (!response.ok) throw new Error(await readError(response));
 }
@@ -58,7 +59,8 @@ export async function fetchDecisions(serveUrl: string, runId: string): Promise<D
 }
 
 export async function evaluateDecision(serveUrl: string, runId: string, request: {
-  request_id: string; profile_id: string; source_id: string; source_sha256: string; selection_start: number; selection_end: number;
+  request_id: string; profile_id: string; source_id: string; source_sha256: string;
+  selection: { start: number; end: number };
 }): Promise<void> {
   const response = await fetch(`${normalizeRuntimeUrl(serveUrl)}/v1/assist/runs/${encodeURIComponent(runId)}/evaluations`, {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(request),

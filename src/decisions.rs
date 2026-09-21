@@ -76,6 +76,15 @@ pub struct DecisionSource {
     pub text: String,
 }
 
+/// A half-open range of Unicode scalar indexes into a captured source. This
+/// stays as a nested object on the wire so it cannot be confused with byte or
+/// UTF-16 offsets.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, TS)]
+pub struct DecisionSelection {
+    pub start: usize,
+    pub end: usize,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct DecisionRecord {
     #[serde(default = "schema_version")]
@@ -86,8 +95,8 @@ pub struct DecisionRecord {
     /// range. A reused request ID may not silently address other content.
     pub request_fingerprint: String,
     /// Unicode scalar offsets into the persisted source excerpt.
-    pub selection_start: usize,
-    pub selection_end: usize,
+    #[serde(default)]
+    pub selection: DecisionSelection,
     pub run_id: String,
     pub source_id: String,
     pub source_sha256: String,
@@ -155,8 +164,7 @@ pub struct EvaluateRequest {
     pub profile_id: String,
     pub source_id: String,
     pub source_sha256: String,
-    pub selection_start: usize,
-    pub selection_end: usize,
+    pub selection: DecisionSelection,
 }
 
 #[cfg(feature = "decision-support")]
@@ -526,6 +534,21 @@ mod enabled {
             Ok(())
         }
 
+        /// The mode endpoint is profile-bound even though this pilot currently
+        /// exposes one profile. Keeping the validation here prevents a browser
+        /// from opting a run into an undeclared responsibility map later.
+        pub fn set_mode_for_profile(
+            &self,
+            run_id: &str,
+            mode: DecisionMode,
+            profile_id: &str,
+        ) -> Result<()> {
+            if profile_id != PROFILE_ID {
+                anyhow::bail!("unknown decision profile")
+            }
+            self.set_mode(run_id, mode)
+        }
+
         /// Attach to the daemon-issued diagram address. This is intentionally a
         /// client of the existing loopback SSE stream, not a second callback in
         /// the topology runtime: a failed observer cannot delay a reaction.
@@ -783,8 +806,15 @@ mod enabled {
             if source.sha256 != request.source_sha256 {
                 anyhow::bail!("source digest does not match")
             }
+            if run.sources.values().any(|newer| {
+                newer.reaction_id == source.reaction_id
+                    && newer.port == source.port
+                    && newer.sequence > source.sequence
+            }) {
+                anyhow::bail!("source is stale")
+            }
             let selected =
-                unicode_slice(&source.text, request.selection_start, request.selection_end)?;
+                unicode_slice(&source.text, request.selection.start, request.selection.end)?;
             if selected.as_bytes().len() > MAX_SELECTION_BYTES {
                 anyhow::bail!("selection is too large")
             }
@@ -818,8 +848,7 @@ mod enabled {
                 decision_id: Uuid::new_v4().to_string(),
                 request_id: request.request_id.clone(),
                 request_fingerprint: fingerprint.clone(),
-                selection_start: request.selection_start,
-                selection_end: request.selection_end,
+                selection: request.selection,
                 run_id: run_id.to_string(),
                 source_id: source.source_id.clone(),
                 source_sha256: source.sha256.clone(),
@@ -1482,8 +1511,8 @@ mod enabled {
             request.profile_id,
             request.source_id,
             request.source_sha256,
-            request.selection_start,
-            request.selection_end,
+            request.selection.start,
+            request.selection.end,
             sha256(selected),
         ))
     }
@@ -1636,8 +1665,7 @@ mod enabled {
                 profile_id: "review-owner-v1".to_string(),
                 source_id: source.source_id.clone(),
                 source_sha256: source.sha256.clone(),
-                selection_start: 0,
-                selection_end: 6,
+                selection: DecisionSelection { start: 0, end: 6 },
             }
         }
 
@@ -1729,8 +1757,7 @@ mod enabled {
                     profile_id: "review-owner-v1".to_string(),
                     source_id: source.source_id.clone(),
                     source_sha256: "wrong".to_string(),
-                    selection_start: 0,
-                    selection_end: 6,
+                    selection: DecisionSelection { start: 0, end: 6 },
                 },
             );
             assert!(rejected.is_err());
@@ -1742,8 +1769,7 @@ mod enabled {
                         profile_id: "review-owner-v1".to_string(),
                         source_id: source.source_id.clone(),
                         source_sha256: source.sha256.clone(),
-                        selection_start: 0,
-                        selection_end: 6,
+                        selection: DecisionSelection { start: 0, end: 6 },
                     },
                 )
                 .unwrap();
@@ -1887,8 +1913,47 @@ mod enabled {
             assert_eq!(first.decision_id, duplicate.decision_id);
 
             let mut changed = request(&source, "one");
-            changed.selection_end = 7;
+            changed.selection.end = 7;
             assert!(service.evaluate("run", changed).is_err());
+        }
+
+        #[test]
+        fn a_replaced_reaction_output_rejects_the_older_selection() {
+            let dir = tempdir().unwrap();
+            let service = DecisionService::with_test_provider(
+                test_config(),
+                dir.path(),
+                Arc::new(FakeProvider {
+                    calls: Arc::new(AtomicUsize::new(0)),
+                }),
+            );
+            service.set_mode("run", DecisionMode::Suggest).unwrap();
+            let first = service
+                .capture(
+                    "run",
+                    "reaction::review",
+                    "invocation-1",
+                    1,
+                    "review",
+                    "first review output",
+                )
+                .unwrap()
+                .unwrap();
+            service
+                .capture(
+                    "run",
+                    "reaction::review",
+                    "invocation-2",
+                    2,
+                    "review",
+                    "replacement review output",
+                )
+                .unwrap()
+                .unwrap();
+            let error = service
+                .evaluate("run", request(&first, "stale"))
+                .unwrap_err();
+            assert!(error.to_string().contains("source is stale"));
         }
 
         #[test]
@@ -2038,7 +2103,7 @@ mod enabled {
             let mut requested = Vec::new();
             for (offset, request_id) in ["one", "two", "three"].into_iter().enumerate() {
                 let mut evaluation = request(&source, request_id);
-                evaluation.selection_end += offset;
+                evaluation.selection.end += offset;
                 requested.push(service.evaluate("run", evaluation).unwrap());
             }
             started_rx.recv_timeout(Duration::from_secs(1)).unwrap();
