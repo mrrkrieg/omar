@@ -22,30 +22,37 @@ pub enum DecisionMode {
 pub enum DecisionStatus {
     Queued,
     Evaluating,
-    Ready,
-    Failed,
+    Suggested,
+    NeedsReview,
+    Unavailable,
+    Cancelled,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum DecisionCoverage {
-    Continuous,
+    ContinuousSinceAttachment,
     Partial,
-    Stale,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct DecisionCapabilities {
+    pub schema_version: u32,
     pub available: bool,
     pub configured: bool,
+    pub enabled: bool,
+    pub key_present: bool,
     pub model: String,
     pub modes: Vec<DecisionMode>,
+    pub profiles: Vec<String>,
     pub max_requests_per_run: u32,
     pub max_source_bytes: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct DecisionSource {
+    #[serde(default = "schema_version")]
+    pub schema_version: u32,
     pub source_id: String,
     pub run_id: String,
     pub reaction_id: String,
@@ -66,6 +73,8 @@ pub struct DecisionSource {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct DecisionRecord {
+    #[serde(default = "schema_version")]
+    pub schema_version: u32,
     pub decision_id: String,
     pub request_id: String,
     /// Stable binding of the idempotency key to the selected source and scalar
@@ -77,23 +86,64 @@ pub struct DecisionRecord {
     pub run_id: String,
     pub source_id: String,
     pub source_sha256: String,
+    /// Immutable source provenance copied into the decision record so a
+    /// persisted card remains explainable without a live topology.
+    #[serde(default)]
+    pub reaction_id: String,
+    #[serde(default)]
+    pub invocation_id: String,
+    #[serde(default)]
+    pub event_sequence: u64,
+    #[serde(default)]
+    pub port: String,
     pub profile_id: String,
+    #[serde(default)]
+    pub profile_sha256: String,
+    #[serde(default)]
+    pub policy_version: String,
     pub mode: DecisionMode,
     pub status: DecisionStatus,
     pub coverage: DecisionCoverage,
     pub freshness: String,
     pub reason_code: String,
     pub suggestion: String,
+    #[serde(default)]
+    pub owner: Option<String>,
+    #[serde(default)]
+    pub probabilities: Option<BTreeMap<String, f64>>,
+    #[serde(default)]
+    pub sufficient_context: Option<f64>,
     pub confidence: f64,
     pub selected_probability: f64,
     pub owner_probabilities: BTreeMap<String, f64>,
     pub context_probabilities: BTreeMap<String, f64>,
     pub model: Option<String>,
+    #[serde(default = "requested_model")]
+    pub model_requested: String,
+    #[serde(default)]
+    pub model_resolved: Option<String>,
     pub created_at: i64,
+    #[serde(default)]
+    pub created_at_ms: i64,
     pub completed_at: Option<i64>,
+    #[serde(default)]
+    pub completed_at_ms: Option<i64>,
+    #[serde(default)]
+    pub latency_ms: Option<i64>,
+    #[serde(default)]
+    pub input_tokens: Option<i64>,
     pub error: Option<String>,
 }
 
+fn schema_version() -> u32 {
+    1
+}
+
+fn requested_model() -> String {
+    "jev-1.13.0".to_string()
+}
+
+#[cfg(feature = "decision-support")]
 #[derive(Debug, Clone, Deserialize)]
 pub struct EvaluateRequest {
     pub request_id: String,
@@ -104,10 +154,14 @@ pub struct EvaluateRequest {
     pub selection_end: usize,
 }
 
+#[cfg(feature = "decision-support")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FeedbackRequest {
     pub request_id: String,
-    pub outcome: String,
+    #[serde(alias = "outcome")]
+    pub verdict: String,
+    #[serde(default)]
+    pub corrected_owner: Option<String>,
     #[serde(default)]
     pub note: String,
 }
@@ -132,12 +186,16 @@ mod enabled {
     use uuid::Uuid;
 
     const MAX_REQUESTS_PER_RUN: u32 = 100;
+    const MAX_SOURCES_PER_RUN: usize = 100;
+    const MAX_ENROLLED_RUNS: usize = 10;
     const MAX_SOURCE_BYTES: usize = 64 * 1024;
     const MAX_SELECTION_BYTES: usize = 16 * 1024;
     const MAX_PROVIDER_RESPONSE_BYTES: usize = 64 * 1024;
-    const MAX_STORE_BYTES: u64 = 16 * 1024 * 1024;
+    const MAX_STORE_BYTES: u64 = 100 * 1024 * 1024;
     const QUEUE_DEPTH: usize = 32;
     const JEV_MODEL: &str = "jev-1.13.0";
+    const PROFILE_ID: &str = "review-owner-v1";
+    const POLICY_VERSION: &str = "review-owner-v1";
 
     #[derive(Debug, Clone, Deserialize)]
     struct ProviderAnswer {
@@ -168,8 +226,13 @@ mod enabled {
 
     impl TypeSafeProvider {
         fn new(config: &DecisionSupportConfig) -> Result<Self> {
+            if config.provider != "typesafe" || config.model != JEV_MODEL {
+                anyhow::bail!("the review-owner-v1 profile requires TypeSafe Jev 1.13.0")
+            }
             let client = Client::builder()
-                .timeout(Duration::from_secs(config.timeout_seconds.clamp(1, 3)))
+                .timeout(Duration::from_millis(
+                    config.request_timeout_ms.clamp(1, 3_000),
+                ))
                 .redirect(Policy::none())
                 .build()
                 .context("build Jev client")?;
@@ -326,7 +389,7 @@ mod enabled {
     }
     impl Default for DecisionCoverage {
         fn default() -> Self {
-            Self::Continuous
+            Self::ContinuousSinceAttachment
         }
     }
 
@@ -390,14 +453,18 @@ mod enabled {
 
         pub fn capabilities(&self) -> DecisionCapabilities {
             DecisionCapabilities {
+                schema_version: 1,
                 available: true,
                 configured: self.config.enabled,
+                enabled: self.config.enabled,
+                key_present: std::env::var_os("TYPESAFE_API_KEY").is_some(),
                 model: JEV_MODEL.to_string(),
                 modes: vec![
                     DecisionMode::Off,
                     DecisionMode::Shadow,
                     DecisionMode::Suggest,
                 ],
+                profiles: vec![PROFILE_ID.to_string()],
                 max_requests_per_run: MAX_REQUESTS_PER_RUN,
                 max_source_bytes: MAX_SOURCE_BYTES as u32,
             }
@@ -410,6 +477,16 @@ mod enabled {
             let _dispatch = self.dispatch_gate.begin_transition();
             let mut state = self.state.lock().expect("decision support poisoned");
             self.load_run_locked(&mut state, run_id)?;
+            if mode != DecisionMode::Off
+                && state
+                    .runs
+                    .iter()
+                    .filter(|(id, run)| id.as_str() != run_id && run.mode != DecisionMode::Off)
+                    .count()
+                    >= MAX_ENROLLED_RUNS
+            {
+                anyhow::bail!("enrolled run limit reached")
+            }
             let run = state.runs.entry(run_id.to_string()).or_default();
             run.mode = mode;
             run.generation = run.generation.wrapping_add(1);
@@ -423,10 +500,11 @@ mod enabled {
                         )
                     })
                     .map(|record| {
-                        record.status = DecisionStatus::Failed;
-                        record.reason_code = "disabled".to_string();
+                        record.status = DecisionStatus::Cancelled;
+                        record.reason_code = "feature_off".to_string();
                         record.error = Some("decision support was disabled".to_string());
                         record.completed_at = Some(now_unix());
+                        record.completed_at_ms = Some(now_millis());
                         record.clone()
                     })
                     .collect()
@@ -488,8 +566,13 @@ mod enabled {
                 {
                     return Ok(None);
                 }
-                let text = truncate_utf8(text, MAX_SOURCE_BYTES);
+                if run.sources.len() >= MAX_SOURCES_PER_RUN || text.len() > MAX_SOURCE_BYTES {
+                    drop(state);
+                    self.mark_coverage(run_id, DecisionCoverage::Partial);
+                    return Ok(None);
+                }
                 DecisionSource {
+                    schema_version: 1,
                     source_id: Uuid::new_v4().to_string(),
                     run_id: run_id.to_string(),
                     reaction_id: reaction_id.to_string(),
@@ -499,7 +582,7 @@ mod enabled {
                     sha256: sha256(&text),
                     captured_at: now_unix(),
                     coverage: run.coverage,
-                    text,
+                    text: text.to_string(),
                 }
             };
             self.persist(run_id, "source", &source.source_id, &source)?;
@@ -511,7 +594,31 @@ mod enabled {
                 self.remove_persisted(run_id, "source", &source.source_id)?;
                 return Ok(None);
             }
+            let prior_source_ids = run
+                .sources
+                .values()
+                .filter(|prior| {
+                    prior.reaction_id == source.reaction_id && prior.port == source.port
+                })
+                .map(|prior| prior.source_id.clone())
+                .collect::<std::collections::BTreeSet<_>>();
+            let superseded: Vec<_> = run
+                .decisions
+                .values_mut()
+                .filter(|decision| {
+                    decision.source_id != source.source_id
+                        && prior_source_ids.contains(&decision.source_id)
+                })
+                .map(|decision| {
+                    decision.freshness = "superseded".to_string();
+                    decision.clone()
+                })
+                .collect();
             run.sources.insert(source.source_id.clone(), source.clone());
+            drop(state);
+            for decision in superseded {
+                self.persist(run_id, "decision", &decision.decision_id, &decision)?;
+            }
             Ok(Some(source))
         }
 
@@ -534,7 +641,7 @@ mod enabled {
             }
             for decision in run.decisions.values_mut() {
                 decision.coverage = coverage;
-                decision.freshness = "stale".to_string();
+                decision.freshness = "unconfirmed".to_string();
                 decisions.push(decision.clone());
             }
             drop(state);
@@ -546,14 +653,51 @@ mod enabled {
             }
         }
 
+        /// A completed, stopped, or failed topology cannot accept new advice.
+        /// Retain finished cards as historical evidence, and cancel work that
+        /// had not reached a durable provider result.
+        pub fn finish_run(&self, run_id: &str) {
+            let _dispatch = self.dispatch_gate.begin_transition();
+            let mut state = self.state.lock().expect("decision support poisoned");
+            if self.load_run_locked(&mut state, run_id).is_err() {
+                return;
+            }
+            let run = state.runs.entry(run_id.to_string()).or_default();
+            run.mode = DecisionMode::Off;
+            run.generation = run.generation.wrapping_add(1);
+            let records = run
+                .decisions
+                .values_mut()
+                .map(|record| {
+                    if matches!(
+                        record.status,
+                        DecisionStatus::Queued | DecisionStatus::Evaluating
+                    ) {
+                        record.status = DecisionStatus::Cancelled;
+                        record.reason_code = "run_ended".to_string();
+                        record.error =
+                            Some("the OMAR run ended before evaluation completed".to_string());
+                        record.completed_at = Some(now_unix());
+                        record.completed_at_ms = Some(now_millis());
+                    }
+                    record.freshness = "historical".to_string();
+                    record.clone()
+                })
+                .collect::<Vec<_>>();
+            drop(state);
+            for record in records {
+                let _ = self.persist(run_id, "decision", &record.decision_id, &record);
+            }
+        }
+
         #[cfg(test)]
         pub fn sources(&self, run_id: &str) -> (Vec<DecisionSource>, DecisionCoverage) {
             let mut state = self.state.lock().expect("decision support poisoned");
             if self.load_run_locked(&mut state, run_id).is_err() {
-                return (Vec::new(), DecisionCoverage::Stale);
+                return (Vec::new(), DecisionCoverage::Partial);
             }
             let Some(run) = state.runs.get(run_id) else {
-                return (Vec::new(), DecisionCoverage::Stale);
+                return (Vec::new(), DecisionCoverage::Partial);
             };
             (run.sources.values().cloned().collect(), run.coverage)
         }
@@ -562,10 +706,10 @@ mod enabled {
         pub fn decisions(&self, run_id: &str) -> (Vec<DecisionRecord>, DecisionCoverage) {
             let mut state = self.state.lock().expect("decision support poisoned");
             if self.load_run_locked(&mut state, run_id).is_err() {
-                return (Vec::new(), DecisionCoverage::Stale);
+                return (Vec::new(), DecisionCoverage::Partial);
             }
             let Some(run) = state.runs.get(run_id) else {
-                return (Vec::new(), DecisionCoverage::Stale);
+                return (Vec::new(), DecisionCoverage::Partial);
             };
             (run.decisions.values().cloned().collect(), run.coverage)
         }
@@ -665,6 +809,7 @@ mod enabled {
                 anyhow::bail!("request limit reached for this run")
             }
             let record = DecisionRecord {
+                schema_version: 1,
                 decision_id: Uuid::new_v4().to_string(),
                 request_id: request.request_id.clone(),
                 request_fingerprint: fingerprint.clone(),
@@ -673,20 +818,35 @@ mod enabled {
                 run_id: run_id.to_string(),
                 source_id: source.source_id.clone(),
                 source_sha256: source.sha256.clone(),
+                reaction_id: source.reaction_id.clone(),
+                invocation_id: source.invocation_id.clone(),
+                event_sequence: source.sequence,
+                port: source.port.clone(),
                 profile_id: request.profile_id,
+                profile_sha256: profile_sha256(),
+                policy_version: POLICY_VERSION.to_string(),
                 mode: run.mode,
                 status: DecisionStatus::Queued,
                 coverage: run.coverage,
-                freshness: "fresh".to_string(),
+                freshness: "current".to_string(),
                 reason_code: "queued".to_string(),
                 suggestion: "needs_review".to_string(),
+                owner: None,
+                probabilities: None,
+                sufficient_context: None,
                 confidence: 0.0,
                 selected_probability: 0.0,
                 owner_probabilities: BTreeMap::new(),
                 context_probabilities: BTreeMap::new(),
                 model: None,
+                model_requested: JEV_MODEL.to_string(),
+                model_resolved: None,
                 created_at: now_unix(),
+                created_at_ms: now_millis(),
                 completed_at: None,
+                completed_at_ms: None,
+                latency_ms: None,
+                input_tokens: None,
                 error: None,
             };
             self.persist(run_id, "decision", &record.decision_id, &record)?;
@@ -709,14 +869,24 @@ mod enabled {
                 })
                 .is_err()
             {
-                let mut state = self.state.lock().expect("decision support poisoned");
-                if let Some(run) = state.runs.get_mut(run_id) {
-                    run.requests.remove(&record.request_id);
-                    run.fingerprints.remove(&record.request_fingerprint);
-                    run.decisions.remove(&record.decision_id);
+                let unavailable = {
+                    let mut state = self.state.lock().expect("decision support poisoned");
+                    state
+                        .runs
+                        .get_mut(run_id)
+                        .and_then(|run| run.decisions.get_mut(&record.decision_id))
+                        .map(|record| {
+                            record.status = DecisionStatus::Unavailable;
+                            record.reason_code = "queue_full".to_string();
+                            record.error = Some("decision queue is full".to_string());
+                            record.completed_at = Some(now_unix());
+                            record.completed_at_ms = Some(now_millis());
+                            record.clone()
+                        })
+                };
+                if let Some(unavailable) = unavailable {
+                    self.persist(run_id, "decision", &unavailable.decision_id, &unavailable)?;
                 }
-                drop(state);
-                self.remove_persisted(run_id, "decision", &record.decision_id)?;
                 anyhow::bail!("decision queue is full")
             }
             Ok(record)
@@ -741,16 +911,19 @@ mod enabled {
                 anyhow::bail!("unknown decision")
             }
             if let Some(existing) = run.feedback.get(&feedback.request_id) {
-                if existing.outcome != feedback.outcome || existing.note != feedback.note {
+                if existing.verdict != feedback.verdict
+                    || existing.corrected_owner != feedback.corrected_owner
+                    || existing.note != feedback.note
+                {
                     anyhow::bail!("request_id already used")
                 }
                 return Ok(());
             }
             if !matches!(
-                feedback.outcome.as_str(),
-                "accepted" | "rejected" | "corrected"
+                feedback.verdict.as_str(),
+                "useful" | "wrong_owner" | "not_useful" | "dismissed"
             ) {
-                anyhow::bail!("invalid feedback outcome")
+                anyhow::bail!("invalid feedback verdict")
             }
             run.feedback
                 .insert(feedback.request_id.clone(), feedback.clone());
@@ -804,10 +977,11 @@ mod enabled {
                     return;
                 };
                 if run.mode != DecisionMode::Suggest || run.generation != job.generation {
-                    record.status = DecisionStatus::Failed;
-                    record.reason_code = "disabled".to_string();
+                    record.status = DecisionStatus::Cancelled;
+                    record.reason_code = "feature_off".to_string();
                     record.error = Some("decision support was disabled".to_string());
                     record.completed_at = Some(now_unix());
+                    record.completed_at_ms = Some(now_millis());
                     let record = record.clone();
                     drop(state);
                     let _ = self.persist(&job.run_id, "decision", &record.decision_id, &record);
@@ -832,13 +1006,14 @@ mod enabled {
                         .get_mut(&job.run_id)
                         .and_then(|run| run.decisions.get_mut(&job.decision_id))
                         .map(|record| {
-                            record.status = DecisionStatus::Failed;
+                            record.status = DecisionStatus::Unavailable;
                             record.reason_code = "persistence_failure".to_string();
                             record.error = Some(
                                 "could not persist the evaluation before provider dispatch"
                                     .to_string(),
                             );
                             record.completed_at = Some(now_unix());
+                            record.completed_at_ms = Some(now_millis());
                             record.clone()
                         })
                 };
@@ -864,24 +1039,34 @@ mod enabled {
                     return;
                 };
                 if run.mode != DecisionMode::Suggest || run.generation != job.generation {
-                    record.status = DecisionStatus::Failed;
-                    record.reason_code = "disabled".to_string();
+                    record.status = DecisionStatus::Cancelled;
+                    record.reason_code = "feature_off".to_string();
                     record.error = Some("decision support was disabled".to_string());
                 } else if let Ok(outcome) = result {
-                    record.status = DecisionStatus::Ready;
+                    record.status = if outcome.suggestion == "needs_review" {
+                        DecisionStatus::NeedsReview
+                    } else {
+                        DecisionStatus::Suggested
+                    };
                     record.suggestion = outcome.suggestion;
+                    record.owner = outcome.owner;
                     record.confidence = outcome.confidence;
                     record.selected_probability = outcome.selected_probability;
                     record.owner_probabilities = outcome.owner_probabilities;
                     record.context_probabilities = outcome.context_probabilities;
+                    record.probabilities = Some(record.owner_probabilities.clone());
+                    record.sufficient_context = Some(outcome.confidence);
                     record.reason_code = outcome.reason_code;
-                    record.model = Some(outcome.model);
+                    record.model = Some(outcome.model.clone());
+                    record.model_resolved = Some(outcome.model);
                 } else if let Err(error) = result {
-                    record.status = DecisionStatus::Failed;
-                    record.reason_code = "provider_failure".to_string();
+                    record.status = DecisionStatus::Unavailable;
+                    record.reason_code = "provider_error".to_string();
                     record.error = Some(error.to_string());
                 }
                 record.completed_at = Some(now_unix());
+                record.completed_at_ms = Some(now_millis());
+                record.latency_ms = Some(now_millis().saturating_sub(record.created_at_ms));
                 record.clone()
             };
             let _ = self.persist(&job.run_id, "decision", &record.decision_id, &record);
@@ -1024,7 +1209,8 @@ mod enabled {
             // Atomic replacement writes a temporary file before rename. Count
             // that file too, rather than letting the private store exceed its
             // advertised ceiling during a replacement.
-            if current.saturating_add(new_bytes) > MAX_STORE_BYTES {
+            let capacity = self.config.max_store_bytes.min(MAX_STORE_BYTES);
+            if current.saturating_add(new_bytes) > capacity {
                 anyhow::bail!("decision store capacity reached")
             }
             Ok(())
@@ -1065,17 +1251,19 @@ mod enabled {
                         } else if filename.starts_with("decision-") && filename.ends_with(".json") {
                             let mut record: DecisionRecord = serde_json::from_slice(&bytes)
                                 .context("read persisted decision")?;
+                            record.freshness = "historical".to_string();
                             if matches!(
                                 record.status,
                                 DecisionStatus::Queued | DecisionStatus::Evaluating
                             ) {
-                                record.status = DecisionStatus::Failed;
+                                record.status = DecisionStatus::Unavailable;
                                 record.reason_code = "interrupted".to_string();
                                 record.error = Some(
                                     "the daemon restarted before this evaluation completed"
                                         .to_string(),
                                 );
                                 record.completed_at = Some(now_unix());
+                                record.completed_at_ms = Some(now_millis());
                                 interrupted.push(record.clone());
                             }
                             run.coverage = combine_coverage(run.coverage, record.coverage);
@@ -1109,6 +1297,7 @@ mod enabled {
 
     struct PolicyOutcome {
         suggestion: String,
+        owner: Option<String>,
         confidence: f64,
         selected_probability: f64,
         owner_probabilities: BTreeMap<String, f64>,
@@ -1222,16 +1411,27 @@ mod enabled {
             } else {
                 "needs_review".to_string()
             },
+            owner: qualifies.then(|| choice.to_string()),
             confidence,
             selected_probability,
             owner_probabilities: owner.probabilities.clone(),
             context_probabilities: context.probabilities.clone(),
             reason_code: if qualifies {
-                "high_confidence_owner".to_string()
+                "policy_pass".to_string()
             } else {
-                "insufficient_confidence".to_string()
+                reason_for_review(choice, context)
             },
             model: response.model,
+        }
+    }
+
+    fn reason_for_review(choice: &str, context: &ProviderAnswer) -> String {
+        if choice == "multiple" {
+            "multiple_owners".to_string()
+        } else if context.selected.as_deref() == Some("false") {
+            "insufficient_context".to_string()
+        } else {
+            "low_certainty".to_string()
         }
     }
 
@@ -1248,8 +1448,7 @@ mod enabled {
             (DecisionCoverage::Partial, _) | (_, DecisionCoverage::Partial) => {
                 DecisionCoverage::Partial
             }
-            (DecisionCoverage::Stale, _) | (_, DecisionCoverage::Stale) => DecisionCoverage::Stale,
-            _ => DecisionCoverage::Continuous,
+            _ => DecisionCoverage::ContinuousSinceAttachment,
         }
     }
     fn now_unix() -> i64 {
@@ -1261,6 +1460,17 @@ mod enabled {
     fn sha256(text: &str) -> String {
         format!("{:x}", Sha256::digest(text.as_bytes()))
     }
+    fn profile_sha256() -> String {
+        sha256("review-owner-v1\nbackend\nfrontend\ncontract\nenvironment\nmultiple\nuncertain")
+    }
+    fn now_millis() -> i64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+            .try_into()
+            .unwrap_or(i64::MAX)
+    }
     fn request_fingerprint(run_id: &str, request: &EvaluateRequest, selected: &str) -> String {
         sha256(&format!(
             "{run_id}\n{}\n{}\n{}\n{}\n{}\n{}",
@@ -1271,16 +1481,6 @@ mod enabled {
             request.selection_end,
             sha256(selected),
         ))
-    }
-    fn truncate_utf8(text: &str, max: usize) -> String {
-        if text.len() <= max {
-            text.to_string()
-        } else {
-            text.char_indices()
-                .take_while(|(index, _)| *index < max)
-                .map(|(_, c)| c)
-                .collect()
-        }
     }
     fn unicode_slice(text: &str, start: usize, end: usize) -> Result<String> {
         let chars: Vec<(usize, char)> = text.char_indices().collect();
@@ -1545,7 +1745,7 @@ mod enabled {
             let mut records = Vec::new();
             for _ in 0..50 {
                 records = service.decisions("run").0;
-                if records[0].status == DecisionStatus::Ready {
+                if records[0].status == DecisionStatus::Suggested {
                     break;
                 }
                 thread::sleep(Duration::from_millis(10));
@@ -1634,7 +1834,7 @@ mod enabled {
                 .evaluate("run", request(&source, "request-1"))
                 .unwrap();
             for _ in 0..50 {
-                if service.decisions("run").0[0].status == DecisionStatus::Ready {
+                if service.decisions("run").0[0].status == DecisionStatus::Suggested {
                     break;
                 }
                 thread::sleep(Duration::from_millis(10));
@@ -1716,7 +1916,7 @@ mod enabled {
                 .iter()
                 .all(|source| source.coverage == DecisionCoverage::Partial));
             assert!(service.decisions("run").0.iter().all(|record| {
-                record.coverage == DecisionCoverage::Partial && record.freshness == "stale"
+                record.coverage == DecisionCoverage::Partial && record.freshness == "unconfirmed"
             }));
             drop(service);
 
@@ -1728,6 +1928,79 @@ mod enabled {
                 }),
             );
             assert_eq!(restarted.decisions("run").1, DecisionCoverage::Partial);
+        }
+
+        #[test]
+        fn source_overflow_marks_coverage_partial_without_truncating_text() {
+            let dir = tempdir().unwrap();
+            let service = DecisionService::with_test_provider(
+                test_config(),
+                dir.path(),
+                Arc::new(FakeProvider {
+                    calls: Arc::new(AtomicUsize::new(0)),
+                }),
+            );
+            service.set_mode("run", DecisionMode::Shadow).unwrap();
+            for sequence in 0..MAX_SOURCES_PER_RUN {
+                assert!(service
+                    .capture(
+                        "run",
+                        "reaction::review",
+                        &format!("invocation-{sequence}"),
+                        sequence as u64 + 1,
+                        "review",
+                        "review text",
+                    )
+                    .unwrap()
+                    .is_some());
+            }
+            assert!(service
+                .capture(
+                    "run",
+                    "reaction::review",
+                    "overflow",
+                    101,
+                    "review",
+                    "must not be truncated into a source",
+                )
+                .unwrap()
+                .is_none());
+            assert_eq!(service.sources("run").1, DecisionCoverage::Partial);
+        }
+
+        #[test]
+        fn ending_a_run_makes_records_historical_and_cancels_unfinished_work() {
+            let dir = tempdir().unwrap();
+            let service = DecisionService::with_test_provider(
+                test_config(),
+                dir.path(),
+                Arc::new(FakeProvider {
+                    calls: Arc::new(AtomicUsize::new(0)),
+                }),
+            );
+            service.set_mode("run", DecisionMode::Suggest).unwrap();
+            let source = service
+                .capture(
+                    "run",
+                    "reaction::review",
+                    "invocation-1",
+                    1,
+                    "review",
+                    "review text",
+                )
+                .unwrap()
+                .unwrap();
+            service
+                .evaluate("run", request(&source, "run-ended"))
+                .unwrap();
+            service.finish_run("run");
+            let records = service.decisions("run").0;
+            assert_eq!(records.len(), 1);
+            assert_eq!(records[0].freshness, "historical");
+            assert!(matches!(
+                records[0].status,
+                DecisionStatus::Suggested | DecisionStatus::Cancelled
+            ));
         }
 
         #[test]
@@ -1800,7 +2073,7 @@ mod enabled {
                         .find(|record| record.decision_id == queued.decision_id)
                         .unwrap()
                         .status,
-                    DecisionStatus::Failed
+                    DecisionStatus::Cancelled
                 );
             }
         }

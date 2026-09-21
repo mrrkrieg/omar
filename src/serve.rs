@@ -1582,7 +1582,7 @@ fn assist_set_mode(context: &Arc<Context_>, route: &str, body: &[u8]) -> (u16, V
         }
     };
     if let Err(error) = context.decisions.set_mode(run_id, request.mode) {
-        return (409, json!({"error": error.to_string()}));
+        return assist_error(error.to_string());
     }
     if request.mode != DecisionMode::Off {
         match diagram.and_then(|address| address.parse().ok()) {
@@ -1685,7 +1685,7 @@ fn assist_evaluate(context: &Arc<Context_>, route: &str, body: &[u8]) -> (u16, V
     };
     match context.decisions.evaluate(run_id, request) {
         Ok(record) => (202, json!(record)),
-        Err(error) => (409, json!({"error": error.to_string()})),
+        Err(error) => assist_error(error.to_string()),
     }
 }
 
@@ -1706,8 +1706,35 @@ fn assist_feedback(context: &Arc<Context_>, route: &str, body: &[u8]) -> (u16, V
     };
     match context.decisions.feedback(run_id, decision_id, request) {
         Ok(()) => (202, json!({"run_id": run_id, "decision_id": decision_id})),
-        Err(error) => (409, json!({"error": error.to_string()})),
+        Err(error) => assist_error(error.to_string()),
     }
+}
+
+#[cfg(feature = "decision-support")]
+fn assist_error(error: String) -> (u16, Value) {
+    let status = if error.contains("not configured") || error.contains("disabled in config") {
+        503
+    } else if error.contains("queue")
+        || error.contains("request limit")
+        || error.contains("enrolled run limit")
+    {
+        429
+    } else if error.contains("too large") {
+        413
+    } else if error.contains("unknown source")
+        || error.contains("unknown decision")
+        || error.contains("unknown run")
+    {
+        404
+    } else if error.contains("digest")
+        || error.contains("already bound")
+        || error.contains("suggestions are not active")
+    {
+        409
+    } else {
+        400
+    };
+    (status, json!({"error": error}))
 }
 
 fn start_run(context: &Arc<Context_>, body: &[u8]) -> (u16, Value) {
@@ -2112,6 +2139,8 @@ fn spawn_run_thread(
             .lock()
             .expect("serve panels poisoned")
             .remove(&run_id);
+        #[cfg(feature = "decision-support")]
+        context.decisions.finish_run(&run_id);
         let mut runs = context.runs.lock().expect("serve runs poisoned");
         if let Some(record) = runs.get_mut(&run_id) {
             record.finished_at = Some(now_unix());

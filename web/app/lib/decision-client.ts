@@ -66,9 +66,9 @@ export async function evaluateDecision(serveUrl: string, runId: string, request:
   if (!response.ok) throw new Error(await readError(response));
 }
 
-export async function recordDecisionFeedback(serveUrl: string, runId: string, decisionId: string, outcome: "accepted" | "rejected" | "corrected"): Promise<void> {
+export async function recordDecisionFeedback(serveUrl: string, runId: string, decisionId: string, verdict: "useful" | "wrong_owner" | "not_useful" | "dismissed"): Promise<void> {
   const response = await fetch(`${normalizeRuntimeUrl(serveUrl)}/v1/assist/runs/${encodeURIComponent(runId)}/decisions/${encodeURIComponent(decisionId)}/feedback`, {
-    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ request_id: crypto.randomUUID(), outcome }),
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ request_id: crypto.randomUUID(), verdict }),
   });
   if (!response.ok) throw new Error(await readError(response));
 }

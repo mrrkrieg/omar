@@ -37,11 +37,11 @@ export const DECISION_MODES = ["off", "shadow", "suggest"] as const;
 export type DecisionMode = (typeof DECISION_MODES)[number];
 
 /** The local lifecycle of an advisory evaluation. */
-export const DECISION_STATUSES = ["queued", "evaluating", "ready", "failed"] as const;
+export const DECISION_STATUSES = ["queued", "evaluating", "suggested", "needs_review", "unavailable", "cancelled"] as const;
 export type DecisionStatus = (typeof DECISION_STATUSES)[number];
 
 /** Whether the observer saw a complete run event stream. */
-export const DECISION_COVERAGE = ["continuous", "partial", "stale"] as const;
+export const DECISION_COVERAGE = ["continuous_since_attachment", "partial"] as const;
 export type DecisionCoverage = (typeof DECISION_COVERAGE)[number];
 
 export type DiagramTag = { timestamp: number, microstep: number, };
@@ -133,9 +133,9 @@ export type ConversationSummary = { id: string, title: string, created_at: numbe
 
 export type RunRecord = { run_id: string, team: string, status: RunStatus, diagram_address: string | null, started_at: number, finished_at: number | null, error: string | null, };
 
-export type DecisionCapabilities = { available: boolean, configured: boolean, model: string, modes: Array<DecisionMode>, max_requests_per_run: number, max_source_bytes: number, };
+export type DecisionCapabilities = { schema_version: number, available: boolean, configured: boolean, enabled: boolean, key_present: boolean, model: string, modes: Array<DecisionMode>, profiles: Array<string>, max_requests_per_run: number, max_source_bytes: number, };
 
-export type DecisionSource = { source_id: string, run_id: string, reaction_id: string,
+export type DecisionSource = { schema_version: number, source_id: string, run_id: string, reaction_id: string,
 /**
  * The exact reaction invocation that produced this excerpt.  This keeps
  * a suggestion tied to its observed run event, even when the reaction
@@ -152,7 +152,7 @@ sequence: number, port: string, sha256: string, captured_at: number, coverage: D
  */
 text: string, };
 
-export type DecisionRecord = { decision_id: string, request_id: string,
+export type DecisionRecord = { schema_version: number, decision_id: string, request_id: string,
 /**
  * Stable binding of the idempotency key to the selected source and scalar
  * range. A reused request ID may not silently address other content.
@@ -161,4 +161,9 @@ request_fingerprint: string,
 /**
  * Unicode scalar offsets into the persisted source excerpt.
  */
-selection_start: number, selection_end: number, run_id: string, source_id: string, source_sha256: string, profile_id: string, mode: DecisionMode, status: DecisionStatus, coverage: DecisionCoverage, freshness: string, reason_code: string, suggestion: string, confidence: number, selected_probability: number, owner_probabilities: { [key in string]: number }, context_probabilities: { [key in string]: number }, model: string | null, created_at: number, completed_at: number | null, error: string | null, };
+selection_start: number, selection_end: number, run_id: string, source_id: string, source_sha256: string,
+/**
+ * Immutable source provenance copied into the decision record so a
+ * persisted card remains explainable without a live topology.
+ */
+reaction_id: string, invocation_id: string, event_sequence: number, port: string, profile_id: string, profile_sha256: string, policy_version: string, mode: DecisionMode, status: DecisionStatus, coverage: DecisionCoverage, freshness: string, reason_code: string, suggestion: string, owner: string | null, probabilities: { [key in string]: number } | null, sufficient_context: number | null, confidence: number, selected_probability: number, owner_probabilities: { [key in string]: number }, context_probabilities: { [key in string]: number }, model: string | null, model_requested: string, model_resolved: string | null, created_at: number, created_at_ms: number, completed_at: number | null, completed_at_ms: number | null, latency_ms: number | null, input_tokens: number | null, error: string | null, };

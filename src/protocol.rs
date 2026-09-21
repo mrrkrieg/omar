@@ -156,13 +156,23 @@ fn vocabularies() -> Vec<Vocabulary> {
             "DECISION_STATUSES",
             "DecisionStatus",
             "The local lifecycle of an advisory evaluation.",
-            &[DecisionStatus::Queued, DecisionStatus::Evaluating, DecisionStatus::Ready, DecisionStatus::Failed],
+            &[
+                DecisionStatus::Queued,
+                DecisionStatus::Evaluating,
+                DecisionStatus::Suggested,
+                DecisionStatus::NeedsReview,
+                DecisionStatus::Unavailable,
+                DecisionStatus::Cancelled,
+            ],
         ),
         vocabulary(
             "DECISION_COVERAGE",
             "DecisionCoverage",
             "Whether the observer saw a complete run event stream.",
-            &[DecisionCoverage::Continuous, DecisionCoverage::Partial, DecisionCoverage::Stale],
+            &[
+                DecisionCoverage::ContinuousSinceAttachment,
+                DecisionCoverage::Partial,
+            ],
         ),
     ]
 }

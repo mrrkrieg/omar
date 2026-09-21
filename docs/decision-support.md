@@ -13,8 +13,12 @@ configuration. The per-run mode still defaults to `off`.
 ```toml
 [decision_support]
 enabled = true
-# Jev is pinned to `jev-1.13.0`; three seconds is the default timeout.
-timeout_seconds = 3
+default_mode = "off"
+provider = "typesafe"
+# The review-owner profile pins this model; it is not operator-selectable.
+model = "jev-1.13.0"
+request_timeout_ms = 3000
+max_store_bytes = 104857600
 # Enroll exact reaction IDs in the review-owner profile.
 review_owner_reactions = ["reaction::independent_reviewer"]
 ```
@@ -39,8 +43,10 @@ late, stale, interrupted, or gapped stream is labelled partial instead of being
 silently treated as complete.
 
 The service uses two bounded workers (depth 32), limits a run to 100 requests,
-limits source data to 64 KiB and a selected request to 16 KiB, and does not
-retry provider calls implicitly.
+100 sources, and 10 concurrently enrolled runs. It limits source data to 64
+KiB and a selected request to 16 KiB, and does not retry provider calls
+implicitly. Source overflow marks coverage partial instead of silently
+truncating a finding.
 
 ## Decision policy and records
 
@@ -51,6 +57,15 @@ the selected specific owner probability, the sufficient-context probability,
 and the response's explicit selection. `multiple`, `uncertain`, malformed, or
 lower-confidence responses become `needs_review`.
 
+Every source and decision record has `schema_version: 1`. Decision records
+retain the source reaction, invocation, event sequence, port, profile and
+policy hashes, requested/resolved model, selected scalar range, normalized
+scores, timestamps, latency when known, and an explicit lifecycle state:
+`queued`, `evaluating`, `suggested`, `needs_review`, `unavailable`, or
+`cancelled`. The `freshness` value is `current`, `superseded`, `historical`, or
+`unconfirmed`; it prevents an older handoff from looking current after a newer
+reaction, capture gap, daemon restart, or completed run.
+
 Records live under `<omar_dir>/decisions/<run_id>/` with private permissions and
 atomic file replacement. They are reloaded after a daemon restart so request
 IDs stay idempotent and a repeated selection is deduplicated. A request ID is
@@ -60,7 +75,7 @@ including the normalized probability distributions, decision status, coverage,
 and feedback. Disabling a run waits for an already
 dispatched bounded call, then invalidates queued work before it can become a
 new suggestion. Records outside `retention_days` are unavailable through the
-API, and the private store stops accepting new records at 16 MiB rather than
+API, and the private store stops accepting new records at 100 MiB rather than
 silently evicting evidence. They never contain the TypeSafe API key.
 
 The local API is loopback-only:

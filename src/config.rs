@@ -98,12 +98,27 @@ pub struct SlackBridgeConfig {
 pub struct DecisionSupportConfig {
     #[serde(default)]
     pub enabled: bool,
+    /// Runs remain off unless an operator explicitly changes the per-run
+    /// advisory mode. Kept in config so the effective default is visible.
+    #[serde(default = "default_decision_mode")]
+    pub default_mode: String,
+    /// Provider name is informational; the v1 service only implements the
+    /// fixed TypeSafe Jev adapter.
+    #[serde(default = "default_decision_provider")]
+    pub provider: String,
+    /// Jev is a wire contract, not a user-selectable model in this pilot.
+    #[serde(default = "default_decision_model")]
+    pub model: String,
     #[serde(default = "default_typesafe_base_url")]
     pub typesafe_base_url: String,
     #[serde(default = "default_decision_timeout")]
     pub timeout_seconds: u64,
+    #[serde(default = "default_decision_timeout_ms")]
+    pub request_timeout_ms: u64,
     #[serde(default = "default_decision_retention")]
     pub retention_days: u64,
+    #[serde(default = "default_decision_store_bytes")]
+    pub max_store_bytes: u64,
     /// Fully-qualified reaction IDs enrolled in the `review-owner-v1`
     /// profile. The service never infers eligibility from a reaction name.
     #[serde(default)]
@@ -114,8 +129,28 @@ fn default_typesafe_base_url() -> String {
     "https://api.typesafe.ai".to_string()
 }
 
+fn default_decision_mode() -> String {
+    "off".to_string()
+}
+
+fn default_decision_provider() -> String {
+    "typesafe".to_string()
+}
+
+fn default_decision_model() -> String {
+    "jev-1.13.0".to_string()
+}
+
 fn default_decision_timeout() -> u64 {
     3
+}
+
+fn default_decision_timeout_ms() -> u64 {
+    3_000
+}
+
+fn default_decision_store_bytes() -> u64 {
+    100 * 1024 * 1024
 }
 
 fn default_decision_retention() -> u64 {
@@ -126,9 +161,14 @@ impl Default for DecisionSupportConfig {
     fn default() -> Self {
         Self {
             enabled: false,
+            default_mode: default_decision_mode(),
+            provider: default_decision_provider(),
+            model: default_decision_model(),
             typesafe_base_url: default_typesafe_base_url(),
             timeout_seconds: default_decision_timeout(),
+            request_timeout_ms: default_decision_timeout_ms(),
             retention_days: default_decision_retention(),
+            max_store_bytes: default_decision_store_bytes(),
             review_owner_reactions: Vec::new(),
         }
     }

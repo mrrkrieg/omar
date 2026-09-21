@@ -44,6 +44,14 @@ export function Suggestions({ serveUrl, runId, capabilities }: Props) {
       setMessage(String(error));
     }
   };
+  const copyHandoffNote = async (decision: DecisionRecord) => {
+    const source = sources.find((item) => item.source_id === decision.source_id);
+    const excerpt = source?.text ?? "";
+    await navigator.clipboard.writeText(
+      `Suggested owner: ${decision.suggestion}\nFinding: ${excerpt}\nSource: ${source?.reaction_id ?? "review"} · ${source?.port ?? "review"} handoff · invocation ${source?.invocation_id ?? "unknown"}\nReason: ${decision.reason_code}`,
+    );
+    setMessage("Handoff note copied. OMAR did not send it anywhere.");
+  };
   const evaluate = async () => {
     const input = excerpt.current;
     if (!source || !input) return;
@@ -70,9 +78,13 @@ export function Suggestions({ serveUrl, runId, capabilities }: Props) {
   }
   return <div className="suggestions" role="tabpanel">
     <div className="suggestions-heading">
-      <b>Suggestions</b><button type="button" onClick={() => void enable()}>Enable for this run</button>
+      <b>Suggestions</b><button type="button" onClick={() => void enable()} disabled={!capabilities.key_present}>Enable for this run</button>
     </div>
     <p>Advisory only. OMAR will not route work, message agents, or change this run.</p>
+    <p className="suggestions-message">
+      Jev {capabilities.model} · {capabilities.key_present ? "provider key available" : "provider key unavailable"}
+    </p>
+    {!capabilities.key_present ? <p>Add <code>TYPESAFE_API_KEY</code> to the daemon environment before enabling suggestions.</p> : null}
     {sources.length ? <>
       <label>Review output
         <select value={source?.source_id ?? ""} onChange={(event) => setSelected(event.target.value)}>
@@ -84,13 +96,15 @@ export function Suggestions({ serveUrl, runId, capabilities }: Props) {
     </> : <p>Waiting for eligible review output.</p>}
     {message ? <p className="suggestions-message">{message}</p> : null}
     {decisions.map((decision) => <article className="suggestion-card" key={decision.decision_id}>
-      <b>Suggested owner: {decision.suggestion.replaceAll("_", " ")}</b>
+      <b>{decision.status === "suggested" ? `Suggested owner: ${decision.suggestion.replaceAll("_", " ")}` : decision.status.replaceAll("_", " ")}</b>
       <span>{decision.status} · confidence {Math.round(decision.confidence * 100)}%</span>
-      <small>{decision.reason_code}</small>
-      {decision.status === "ready" ? <div>
-        <button type="button" onClick={() => void navigator.clipboard.writeText(`Suggested owner: ${decision.suggestion}\nReason: ${decision.reason_code}`)}>Copy handoff note</button>
-        <button type="button" onClick={() => void recordDecisionFeedback(serveUrl, runId, decision.decision_id, "accepted")}>Helpful</button>
-        <button type="button" onClick={() => void recordDecisionFeedback(serveUrl, runId, decision.decision_id, "rejected")}>Not helpful</button>
+      <small>{decision.reason_code} · {decision.coverage.replaceAll("_", " ")} · {decision.freshness}</small>
+      {decision.model ? <small>Jev {decision.model}</small> : null}
+      {decision.status === "suggested" || decision.status === "needs_review" ? <div>
+        <button type="button" onClick={() => void copyHandoffNote(decision)}>Copy handoff note</button>
+        <button type="button" onClick={() => void recordDecisionFeedback(serveUrl, runId, decision.decision_id, "useful")}>Helpful</button>
+        <button type="button" onClick={() => void recordDecisionFeedback(serveUrl, runId, decision.decision_id, "not_useful")}>Not helpful</button>
+        <button type="button" onClick={() => void recordDecisionFeedback(serveUrl, runId, decision.decision_id, "dismissed")}>Dismiss</button>
       </div> : null}
     </article>)}
   </div>;
