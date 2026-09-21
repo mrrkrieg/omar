@@ -6,6 +6,7 @@
 //! run's lifecycle.
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use ts_rs::TS;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -48,6 +49,12 @@ pub struct DecisionSource {
     pub source_id: String,
     pub run_id: String,
     pub reaction_id: String,
+    /// The exact reaction invocation that produced this excerpt.  This keeps
+    /// a suggestion tied to its observed run event, even when the reaction
+    /// executes again later in the same run.
+    pub invocation_id: String,
+    /// Diagram event sequence at which this output was observed.
+    pub sequence: u64,
     pub port: String,
     pub sha256: String,
     pub captured_at: i64,
@@ -61,6 +68,12 @@ pub struct DecisionSource {
 pub struct DecisionRecord {
     pub decision_id: String,
     pub request_id: String,
+    /// Stable binding of the idempotency key to the selected source and scalar
+    /// range. A reused request ID may not silently address other content.
+    pub request_fingerprint: String,
+    /// Unicode scalar offsets into the persisted source excerpt.
+    pub selection_start: usize,
+    pub selection_end: usize,
     pub run_id: String,
     pub source_id: String,
     pub source_sha256: String,
@@ -73,6 +86,8 @@ pub struct DecisionRecord {
     pub suggestion: String,
     pub confidence: f64,
     pub selected_probability: f64,
+    pub owner_probabilities: BTreeMap<String, f64>,
+    pub context_probabilities: BTreeMap<String, f64>,
     pub model: Option<String>,
     pub created_at: i64,
     pub completed_at: Option<i64>,
@@ -106,13 +121,12 @@ mod enabled {
     use reqwest::redirect::Policy;
     use serde_json::{json, Value};
     use sha2::{Digest, Sha256};
-    use std::collections::BTreeMap;
     use std::fs::{self, File, OpenOptions};
     use std::io::Write;
-    use std::io::{BufRead, BufReader};
+    use std::io::{BufRead, BufReader, Read};
     use std::net::{SocketAddr, TcpStream};
     use std::path::{Path, PathBuf};
-    use std::sync::{mpsc, Arc, Mutex};
+    use std::sync::{mpsc, Arc, Condvar, Mutex};
     use std::thread;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
     use uuid::Uuid;
@@ -120,12 +134,16 @@ mod enabled {
     const MAX_REQUESTS_PER_RUN: u32 = 100;
     const MAX_SOURCE_BYTES: usize = 64 * 1024;
     const MAX_SELECTION_BYTES: usize = 16 * 1024;
+    const MAX_PROVIDER_RESPONSE_BYTES: usize = 64 * 1024;
+    const MAX_STORE_BYTES: u64 = 16 * 1024 * 1024;
     const QUEUE_DEPTH: usize = 32;
     const JEV_MODEL: &str = "jev-1.13.0";
 
     #[derive(Debug, Clone, Deserialize)]
     struct ProviderAnswer {
         question_id: String,
+        #[serde(rename = "type")]
+        kind: String,
         #[serde(default)]
         selected: Option<String>,
         #[serde(default)]
@@ -170,7 +188,7 @@ mod enabled {
         fn evaluate(&self, selected: &str) -> Result<ProviderResponse> {
             let key = std::env::var("TYPESAFE_API_KEY")
                 .map_err(|_| anyhow!("TYPESAFE_API_KEY is not configured"))?;
-            let response = self
+            let mut response = self
                 .client
                 .post(&self.endpoint)
                 .bearer_auth(key)
@@ -186,18 +204,38 @@ mod enabled {
                 .context("call TypeSafe SystemOne")?
                 .error_for_status()
                 .context("TypeSafe SystemOne rejected request")?;
-            response.json().context("parse TypeSafe SystemOne response")
+            if response
+                .content_length()
+                .is_some_and(|length| length > MAX_PROVIDER_RESPONSE_BYTES as u64)
+            {
+                anyhow::bail!("TypeSafe SystemOne response exceeded the advisory bound")
+            }
+            let mut body = Vec::with_capacity(MAX_PROVIDER_RESPONSE_BYTES);
+            response
+                .by_ref()
+                .take((MAX_PROVIDER_RESPONSE_BYTES + 1) as u64)
+                .read_to_end(&mut body)
+                .context("read TypeSafe SystemOne response")?;
+            if body.len() > MAX_PROVIDER_RESPONSE_BYTES {
+                anyhow::bail!("TypeSafe SystemOne response exceeded the advisory bound")
+            }
+            serde_json::from_slice(&body).context("parse TypeSafe SystemOne response")
         }
     }
 
     #[derive(Default)]
     struct RunState {
         mode: DecisionMode,
+        /// Every mode transition invalidates work admitted by the previous
+        /// mode. A completed provider response must match this generation
+        /// before it can become a visible suggestion.
+        generation: u64,
         coverage: DecisionCoverage,
         observer_attached: bool,
         sources: BTreeMap<String, DecisionSource>,
         decisions: BTreeMap<String, DecisionRecord>,
         requests: BTreeMap<String, String>,
+        fingerprints: BTreeMap<String, String>,
         feedback: BTreeMap<String, FeedbackRequest>,
     }
 
@@ -205,6 +243,80 @@ mod enabled {
         runs: BTreeMap<String, RunState>,
         sender: Option<mpsc::SyncSender<Job>>,
         workers_started: bool,
+    }
+
+    /// A writer-preferred gate around provider dispatch. A mode transition
+    /// first prevents new calls, then waits for the already dispatched calls
+    /// to finish. This keeps `off` from racing a queued worker while allowing
+    /// the two bounded workers to call the provider concurrently.
+    struct DispatchGate {
+        state: Mutex<DispatchGateState>,
+        wake: Condvar,
+    }
+
+    #[derive(Default)]
+    struct DispatchGateState {
+        active_calls: usize,
+        transition_pending: bool,
+    }
+
+    struct DispatchPermit(Arc<DispatchGate>);
+    struct ModePermit(Arc<DispatchGate>);
+
+    impl DispatchGate {
+        fn begin_dispatch(self: &Arc<Self>) -> DispatchPermit {
+            let mut state = self.state.lock().expect("decision dispatch gate poisoned");
+            while state.transition_pending {
+                state = self
+                    .wake
+                    .wait(state)
+                    .expect("decision dispatch gate poisoned");
+            }
+            state.active_calls += 1;
+            DispatchPermit(self.clone())
+        }
+
+        fn begin_transition(self: &Arc<Self>) -> ModePermit {
+            let mut state = self.state.lock().expect("decision dispatch gate poisoned");
+            while state.transition_pending {
+                state = self
+                    .wake
+                    .wait(state)
+                    .expect("decision dispatch gate poisoned");
+            }
+            state.transition_pending = true;
+            while state.active_calls != 0 {
+                state = self
+                    .wake
+                    .wait(state)
+                    .expect("decision dispatch gate poisoned");
+            }
+            ModePermit(self.clone())
+        }
+    }
+
+    impl Drop for DispatchPermit {
+        fn drop(&mut self) {
+            let mut state = self
+                .0
+                .state
+                .lock()
+                .expect("decision dispatch gate poisoned");
+            state.active_calls -= 1;
+            self.0.wake.notify_all();
+        }
+    }
+
+    impl Drop for ModePermit {
+        fn drop(&mut self) {
+            let mut state = self
+                .0
+                .state
+                .lock()
+                .expect("decision dispatch gate poisoned");
+            state.transition_pending = false;
+            self.0.wake.notify_all();
+        }
     }
 
     impl Default for DecisionMode {
@@ -221,6 +333,7 @@ mod enabled {
     struct Job {
         run_id: String,
         decision_id: String,
+        generation: u64,
         selected: String,
     }
 
@@ -229,6 +342,13 @@ mod enabled {
         root: PathBuf,
         provider: Arc<dyn Provider>,
         state: Arc<Mutex<State>>,
+        /// Serializes capacity checks with the corresponding atomic write, so
+        /// two observer or worker threads cannot both spend the same space.
+        storage_gate: Arc<Mutex<()>>,
+        /// A mode change takes the write side before it changes the run. A
+        /// provider call holds the read side from its final eligibility check
+        /// through response persistence, so `off` cannot race an egress.
+        dispatch_gate: Arc<DispatchGate>,
     }
 
     impl DecisionService {
@@ -260,6 +380,11 @@ mod enabled {
                     sender: None,
                     workers_started: false,
                 })),
+                storage_gate: Arc::new(Mutex::new(())),
+                dispatch_gate: Arc::new(DispatchGate {
+                    state: Mutex::new(DispatchGateState::default()),
+                    wake: Condvar::new(),
+                }),
             }
         }
 
@@ -282,11 +407,38 @@ mod enabled {
             if !self.config.enabled {
                 anyhow::bail!("decision support is disabled in config")
             }
+            let _dispatch = self.dispatch_gate.begin_transition();
             let mut state = self.state.lock().expect("decision support poisoned");
+            self.load_run_locked(&mut state, run_id)?;
             let run = state.runs.entry(run_id.to_string()).or_default();
             run.mode = mode;
+            run.generation = run.generation.wrapping_add(1);
+            let cancelled: Vec<_> = if mode == DecisionMode::Off {
+                run.decisions
+                    .values_mut()
+                    .filter(|record| {
+                        matches!(
+                            record.status,
+                            DecisionStatus::Queued | DecisionStatus::Evaluating
+                        )
+                    })
+                    .map(|record| {
+                        record.status = DecisionStatus::Failed;
+                        record.reason_code = "disabled".to_string();
+                        record.error = Some("decision support was disabled".to_string());
+                        record.completed_at = Some(now_unix());
+                        record.clone()
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
             if mode != DecisionMode::Off {
                 self.start_workers_locked(&mut state);
+            }
+            drop(state);
+            for record in cancelled {
+                self.persist(run_id, "decision", &record.decision_id, &record)?;
             }
             Ok(())
         }
@@ -300,6 +452,9 @@ mod enabled {
             }
             {
                 let mut state = self.state.lock().expect("decision support poisoned");
+                if self.load_run_locked(&mut state, &run_id).is_err() {
+                    return;
+                }
                 let run = state.runs.entry(run_id.clone()).or_default();
                 if run.mode == DecisionMode::Off || run.observer_attached {
                     return;
@@ -319,50 +474,147 @@ mod enabled {
             &self,
             run_id: &str,
             reaction_id: &str,
+            invocation_id: &str,
+            sequence: u64,
             port: &str,
             text: &str,
         ) -> Result<Option<DecisionSource>> {
+            let source = {
+                let mut state = self.state.lock().expect("decision support poisoned");
+                self.load_run_locked(&mut state, run_id)?;
+                let run = state.runs.entry(run_id.to_string()).or_default();
+                if run.mode == DecisionMode::Off
+                    || !is_review_output(&self.config, reaction_id, port)
+                {
+                    return Ok(None);
+                }
+                let text = truncate_utf8(text, MAX_SOURCE_BYTES);
+                DecisionSource {
+                    source_id: Uuid::new_v4().to_string(),
+                    run_id: run_id.to_string(),
+                    reaction_id: reaction_id.to_string(),
+                    invocation_id: invocation_id.to_string(),
+                    sequence,
+                    port: port.to_string(),
+                    sha256: sha256(&text),
+                    captured_at: now_unix(),
+                    coverage: run.coverage,
+                    text,
+                }
+            };
+            self.persist(run_id, "source", &source.source_id, &source)?;
             let mut state = self.state.lock().expect("decision support poisoned");
+            self.load_run_locked(&mut state, run_id)?;
             let run = state.runs.entry(run_id.to_string()).or_default();
-            if run.mode == DecisionMode::Off || !is_review_output(reaction_id, port) {
+            if run.mode == DecisionMode::Off {
+                drop(state);
+                self.remove_persisted(run_id, "source", &source.source_id)?;
                 return Ok(None);
             }
-            let text = truncate_utf8(text, MAX_SOURCE_BYTES);
-            let source = DecisionSource {
-                source_id: Uuid::new_v4().to_string(),
-                run_id: run_id.to_string(),
-                reaction_id: reaction_id.to_string(),
-                port: port.to_string(),
-                sha256: sha256(&text),
-                captured_at: now_unix(),
-                coverage: run.coverage,
-                text,
-            };
             run.sources.insert(source.source_id.clone(), source.clone());
-            drop(state);
-            self.persist(run_id, "source", &source.source_id, &source)?;
             Ok(Some(source))
         }
 
         pub fn mark_coverage(&self, run_id: &str, coverage: DecisionCoverage) {
             let mut state = self.state.lock().expect("decision support poisoned");
-            state.runs.entry(run_id.to_string()).or_default().coverage = coverage;
+            if self.load_run_locked(&mut state, run_id).is_err() {
+                return;
+            }
+            let run = state.runs.entry(run_id.to_string()).or_default();
+            let coverage = combine_coverage(run.coverage, coverage);
+            if run.coverage == coverage {
+                return;
+            }
+            run.coverage = coverage;
+            let mut sources = Vec::new();
+            let mut decisions = Vec::new();
+            for source in run.sources.values_mut() {
+                source.coverage = coverage;
+                sources.push(source.clone());
+            }
+            for decision in run.decisions.values_mut() {
+                decision.coverage = coverage;
+                decision.freshness = "stale".to_string();
+                decisions.push(decision.clone());
+            }
+            drop(state);
+            for source in sources {
+                let _ = self.persist(run_id, "source", &source.source_id, &source);
+            }
+            for decision in decisions {
+                let _ = self.persist(run_id, "decision", &decision.decision_id, &decision);
+            }
         }
 
+        #[cfg(test)]
         pub fn sources(&self, run_id: &str) -> (Vec<DecisionSource>, DecisionCoverage) {
-            let state = self.state.lock().expect("decision support poisoned");
+            let mut state = self.state.lock().expect("decision support poisoned");
+            if self.load_run_locked(&mut state, run_id).is_err() {
+                return (Vec::new(), DecisionCoverage::Stale);
+            }
             let Some(run) = state.runs.get(run_id) else {
                 return (Vec::new(), DecisionCoverage::Stale);
             };
             (run.sources.values().cloned().collect(), run.coverage)
         }
 
+        #[cfg(test)]
         pub fn decisions(&self, run_id: &str) -> (Vec<DecisionRecord>, DecisionCoverage) {
-            let state = self.state.lock().expect("decision support poisoned");
+            let mut state = self.state.lock().expect("decision support poisoned");
+            if self.load_run_locked(&mut state, run_id).is_err() {
+                return (Vec::new(), DecisionCoverage::Stale);
+            }
             let Some(run) = state.runs.get(run_id) else {
                 return (Vec::new(), DecisionCoverage::Stale);
             };
             (run.decisions.values().cloned().collect(), run.coverage)
+        }
+
+        pub fn sources_page(
+            &self,
+            run_id: &str,
+            cursor: Option<&str>,
+        ) -> Result<(Vec<DecisionSource>, DecisionCoverage, Option<String>)> {
+            let mut state = self.state.lock().expect("decision support poisoned");
+            self.load_run_locked(&mut state, run_id)?;
+            let run = state
+                .runs
+                .get(run_id)
+                .ok_or_else(|| anyhow!("unknown run"))?;
+            let (sources, next_cursor) = page_records(&run.sources, cursor)?;
+            Ok((sources, run.coverage, next_cursor))
+        }
+
+        pub fn decisions_page(
+            &self,
+            run_id: &str,
+            cursor: Option<&str>,
+        ) -> Result<(Vec<DecisionRecord>, DecisionCoverage, Option<String>)> {
+            let mut state = self.state.lock().expect("decision support poisoned");
+            self.load_run_locked(&mut state, run_id)?;
+            let run = state
+                .runs
+                .get(run_id)
+                .ok_or_else(|| anyhow!("unknown run"))?;
+            let (decisions, next_cursor) = page_records(&run.decisions, cursor)?;
+            Ok((decisions, run.coverage, next_cursor))
+        }
+
+        pub fn has_persisted_run(&self, run_id: &str) -> bool {
+            Uuid::parse_str(run_id).is_ok()
+                && self.root.join(run_id).is_dir()
+                && self.run_is_within_retention(run_id)
+        }
+
+        /// A newly created live run has no private record until its first
+        /// captured source. Once it does, retention applies even if the
+        /// daemon stays up for longer than the configured window.
+        pub fn may_read_run(&self, run_id: &str, is_live_run: bool) -> bool {
+            if self.root.join(run_id).is_dir() {
+                self.has_persisted_run(run_id)
+            } else {
+                is_live_run
+            }
         }
 
         pub fn evaluate(&self, run_id: &str, request: EvaluateRequest) -> Result<DecisionRecord> {
@@ -370,19 +622,10 @@ mod enabled {
                 anyhow::bail!("request_id is required")
             }
             let mut state = self.state.lock().expect("decision support poisoned");
+            self.load_run_locked(&mut state, run_id)?;
             let run = state.runs.entry(run_id.to_string()).or_default();
             if run.mode != DecisionMode::Suggest {
                 anyhow::bail!("suggestions are not active for this run")
-            }
-            if let Some(id) = run.requests.get(&request.request_id) {
-                return run
-                    .decisions
-                    .get(id)
-                    .cloned()
-                    .ok_or_else(|| anyhow!("idempotency record missing"));
-            }
-            if run.requests.len() >= MAX_REQUESTS_PER_RUN as usize {
-                anyhow::bail!("request limit reached for this run")
             }
             let source = run
                 .sources
@@ -399,9 +642,34 @@ mod enabled {
             if request.profile_id != "review-owner-v1" {
                 anyhow::bail!("unknown decision profile")
             }
+            let fingerprint = request_fingerprint(run_id, &request, &selected);
+            if let Some(id) = run.requests.get(&request.request_id) {
+                let existing = run
+                    .decisions
+                    .get(id)
+                    .cloned()
+                    .ok_or_else(|| anyhow!("idempotency record missing"))?;
+                if existing.request_fingerprint != fingerprint {
+                    anyhow::bail!("request_id is already bound to different source content")
+                }
+                return Ok(existing);
+            }
+            if let Some(id) = run.fingerprints.get(&fingerprint) {
+                return run
+                    .decisions
+                    .get(id)
+                    .cloned()
+                    .ok_or_else(|| anyhow!("deduplication record missing"));
+            }
+            if run.requests.len() >= MAX_REQUESTS_PER_RUN as usize {
+                anyhow::bail!("request limit reached for this run")
+            }
             let record = DecisionRecord {
                 decision_id: Uuid::new_v4().to_string(),
                 request_id: request.request_id.clone(),
+                request_fingerprint: fingerprint.clone(),
+                selection_start: request.selection_start,
+                selection_end: request.selection_end,
                 run_id: run_id.to_string(),
                 source_id: source.source_id.clone(),
                 source_sha256: source.sha256.clone(),
@@ -414,26 +682,43 @@ mod enabled {
                 suggestion: "needs_review".to_string(),
                 confidence: 0.0,
                 selected_probability: 0.0,
+                owner_probabilities: BTreeMap::new(),
+                context_probabilities: BTreeMap::new(),
                 model: None,
                 created_at: now_unix(),
                 completed_at: None,
                 error: None,
             };
+            self.persist(run_id, "decision", &record.decision_id, &record)?;
             run.requests
                 .insert(record.request_id.clone(), record.decision_id.clone());
+            run.fingerprints
+                .insert(fingerprint, record.decision_id.clone());
             run.decisions
                 .insert(record.decision_id.clone(), record.clone());
+            let generation = run.generation;
             self.start_workers_locked(&mut state);
             let sender = state.sender.as_ref().expect("workers started").clone();
             drop(state);
-            self.persist(run_id, "decision", &record.decision_id, &record)?;
-            sender
+            if sender
                 .try_send(Job {
                     run_id: run_id.to_string(),
                     decision_id: record.decision_id.clone(),
+                    generation,
                     selected,
                 })
-                .map_err(|_| anyhow!("decision queue is full"))?;
+                .is_err()
+            {
+                let mut state = self.state.lock().expect("decision support poisoned");
+                if let Some(run) = state.runs.get_mut(run_id) {
+                    run.requests.remove(&record.request_id);
+                    run.fingerprints.remove(&record.request_fingerprint);
+                    run.decisions.remove(&record.decision_id);
+                }
+                drop(state);
+                self.remove_persisted(run_id, "decision", &record.decision_id)?;
+                anyhow::bail!("decision queue is full")
+            }
             Ok(record)
         }
 
@@ -447,6 +732,7 @@ mod enabled {
                 anyhow::bail!("request_id is required")
             }
             let mut state = self.state.lock().expect("decision support poisoned");
+            self.load_run_locked(&mut state, run_id)?;
             let run = state
                 .runs
                 .get_mut(run_id)
@@ -469,7 +755,7 @@ mod enabled {
             run.feedback
                 .insert(feedback.request_id.clone(), feedback.clone());
             drop(state);
-            self.persist(run_id, "feedback", decision_id, &feedback)
+            self.persist(run_id, "feedback", &feedback.request_id, &feedback)
         }
 
         fn start_workers_locked(&self, state: &mut State) {
@@ -499,21 +785,67 @@ mod enabled {
                 root: self.root.clone(),
                 provider: self.provider.clone(),
                 state: self.state.clone(),
+                storage_gate: self.storage_gate.clone(),
+                dispatch_gate: self.dispatch_gate.clone(),
             }
         }
 
         fn complete(&self, job: Job) {
-            {
+            let _dispatch = self.dispatch_gate.begin_dispatch();
+            let evaluating = {
                 let mut state = self.state.lock().expect("decision support poisoned");
-                if let Some(record) = state
-                    .runs
-                    .get_mut(&job.run_id)
-                    .and_then(|run| run.decisions.get_mut(&job.decision_id))
-                {
-                    record.status = DecisionStatus::Evaluating;
-                } else {
+                if self.load_run_locked(&mut state, &job.run_id).is_err() {
                     return;
                 }
+                let Some(run) = state.runs.get_mut(&job.run_id) else {
+                    return;
+                };
+                let Some(record) = run.decisions.get_mut(&job.decision_id) else {
+                    return;
+                };
+                if run.mode != DecisionMode::Suggest || run.generation != job.generation {
+                    record.status = DecisionStatus::Failed;
+                    record.reason_code = "disabled".to_string();
+                    record.error = Some("decision support was disabled".to_string());
+                    record.completed_at = Some(now_unix());
+                    let record = record.clone();
+                    drop(state);
+                    let _ = self.persist(&job.run_id, "decision", &record.decision_id, &record);
+                    return;
+                }
+                record.status = DecisionStatus::Evaluating;
+                record.clone()
+            };
+            if self
+                .persist(
+                    &job.run_id,
+                    "decision",
+                    &evaluating.decision_id,
+                    &evaluating,
+                )
+                .is_err()
+            {
+                let failed = {
+                    let mut state = self.state.lock().expect("decision support poisoned");
+                    state
+                        .runs
+                        .get_mut(&job.run_id)
+                        .and_then(|run| run.decisions.get_mut(&job.decision_id))
+                        .map(|record| {
+                            record.status = DecisionStatus::Failed;
+                            record.reason_code = "persistence_failure".to_string();
+                            record.error = Some(
+                                "could not persist the evaluation before provider dispatch"
+                                    .to_string(),
+                            );
+                            record.completed_at = Some(now_unix());
+                            record.clone()
+                        })
+                };
+                if let Some(record) = failed {
+                    let _ = self.persist(&job.run_id, "decision", &record.decision_id, &record);
+                }
+                return;
             }
             let result = self
                 .provider
@@ -522,27 +854,32 @@ mod enabled {
                 .map(policy);
             let record = {
                 let mut state = self.state.lock().expect("decision support poisoned");
-                let Some(record) = state
-                    .runs
-                    .get_mut(&job.run_id)
-                    .and_then(|run| run.decisions.get_mut(&job.decision_id))
-                else {
+                if self.load_run_locked(&mut state, &job.run_id).is_err() {
+                    return;
+                }
+                let Some(run) = state.runs.get_mut(&job.run_id) else {
                     return;
                 };
-                match result {
-                    Ok(outcome) => {
-                        record.status = DecisionStatus::Ready;
-                        record.suggestion = outcome.suggestion;
-                        record.confidence = outcome.confidence;
-                        record.selected_probability = outcome.selected_probability;
-                        record.reason_code = outcome.reason_code;
-                        record.model = Some(outcome.model);
-                    }
-                    Err(error) => {
-                        record.status = DecisionStatus::Failed;
-                        record.reason_code = "provider_failure".to_string();
-                        record.error = Some(error.to_string());
-                    }
+                let Some(record) = run.decisions.get_mut(&job.decision_id) else {
+                    return;
+                };
+                if run.mode != DecisionMode::Suggest || run.generation != job.generation {
+                    record.status = DecisionStatus::Failed;
+                    record.reason_code = "disabled".to_string();
+                    record.error = Some("decision support was disabled".to_string());
+                } else if let Ok(outcome) = result {
+                    record.status = DecisionStatus::Ready;
+                    record.suggestion = outcome.suggestion;
+                    record.confidence = outcome.confidence;
+                    record.selected_probability = outcome.selected_probability;
+                    record.owner_probabilities = outcome.owner_probabilities;
+                    record.context_probabilities = outcome.context_probabilities;
+                    record.reason_code = outcome.reason_code;
+                    record.model = Some(outcome.model);
+                } else if let Err(error) = result {
+                    record.status = DecisionStatus::Failed;
+                    record.reason_code = "provider_failure".to_string();
+                    record.error = Some(error.to_string());
                 }
                 record.completed_at = Some(now_unix());
                 record.clone()
@@ -571,11 +908,15 @@ mod enabled {
             let mut event = String::new();
             let mut data = String::new();
             let mut last_sequence = 0u64;
+            let mut terminal_event_seen = false;
             loop {
                 let mut line = String::new();
                 let read = reader.read_line(&mut line)?;
                 if read == 0 {
-                    break;
+                    if terminal_event_seen {
+                        break;
+                    }
+                    anyhow::bail!("diagram stream ended before the run completed")
                 }
                 if line.len() > 70 * 1024 {
                     anyhow::bail!("diagram event exceeded observer bound")
@@ -589,23 +930,56 @@ mod enabled {
                     continue;
                 }
                 if line == "\n" || line == "\r\n" {
-                    if event == "reaction_completed" && !data.is_empty() {
+                    if !data.is_empty() {
                         let value: Value = serde_json::from_str(&data)?;
-                        let sequence = value.get("sequence").and_then(Value::as_u64).unwrap_or(0);
-                        if last_sequence != 0 && sequence != last_sequence + 1 {
+                        let sequence = value.get("sequence").and_then(Value::as_u64);
+                        let sequence = match sequence {
+                            Some(sequence) if sequence > 0 => sequence,
+                            _ => {
+                                self.mark_coverage(run_id, DecisionCoverage::Partial);
+                                event.clear();
+                                data.clear();
+                                continue;
+                            }
+                        };
+                        if last_sequence == 0 && sequence != 1
+                            || last_sequence != 0 && sequence != last_sequence + 1
+                        {
                             self.mark_coverage(run_id, DecisionCoverage::Partial);
                         }
                         last_sequence = sequence;
-                        let reaction = value
-                            .pointer("/payload/reaction")
-                            .and_then(Value::as_str)
-                            .unwrap_or("");
-                        if let Some(writes) =
-                            value.pointer("/payload/writes").and_then(Value::as_object)
-                        {
-                            for (port, output) in writes {
-                                if let Some(text) = output.as_str() {
-                                    let _ = self.capture(run_id, reaction, port, text);
+                        if matches!(event.as_str(), "run_completed" | "run_failed") {
+                            terminal_event_seen = true;
+                        }
+                        if event == "reaction_completed" {
+                            let reaction = value
+                                .pointer("/payload/reaction")
+                                .and_then(Value::as_str)
+                                .unwrap_or("");
+                            let invocation_id = value
+                                .pointer("/payload/invocation_id")
+                                .and_then(Value::as_str)
+                                .unwrap_or("");
+                            if invocation_id.is_empty() {
+                                self.mark_coverage(run_id, DecisionCoverage::Partial);
+                                event.clear();
+                                data.clear();
+                                continue;
+                            }
+                            if let Some(writes) =
+                                value.pointer("/payload/writes").and_then(Value::as_object)
+                            {
+                                for (port, output) in writes {
+                                    if let Some(text) = output.as_str() {
+                                        let _ = self.capture(
+                                            run_id,
+                                            reaction,
+                                            invocation_id,
+                                            sequence,
+                                            port,
+                                            text,
+                                        );
+                                    }
                                 }
                             }
                         }
@@ -625,11 +999,111 @@ mod enabled {
             value: &T,
         ) -> Result<()> {
             let directory = self.root.join(run_id);
-            write_private(
-                &directory,
-                &format!("{kind}-{id}.json"),
-                &serde_json::to_vec(value)?,
-            )
+            let filename = format!("{kind}-{id}.json");
+            let bytes = serde_json::to_vec(value)?;
+            let _storage = self.storage_gate.lock().expect("decision store poisoned");
+            self.ensure_store_capacity(&directory.join(&filename), bytes.len() as u64)?;
+            write_private(&directory, &filename, &bytes)
+        }
+
+        fn run_is_within_retention(&self, run_id: &str) -> bool {
+            let age = self
+                .root
+                .join(run_id)
+                .metadata()
+                .and_then(|metadata| metadata.modified())
+                .ok()
+                .and_then(|modified| SystemTime::now().duration_since(modified).ok());
+            age.is_some_and(|age| {
+                age <= Duration::from_secs(self.config.retention_days.saturating_mul(86_400))
+            })
+        }
+
+        fn ensure_store_capacity(&self, _destination: &Path, new_bytes: u64) -> Result<()> {
+            let current = directory_size(&self.root)?;
+            // Atomic replacement writes a temporary file before rename. Count
+            // that file too, rather than letting the private store exceed its
+            // advertised ceiling during a replacement.
+            if current.saturating_add(new_bytes) > MAX_STORE_BYTES {
+                anyhow::bail!("decision store capacity reached")
+            }
+            Ok(())
+        }
+
+        fn remove_persisted(&self, run_id: &str, kind: &str, id: &str) -> Result<()> {
+            let _storage = self.storage_gate.lock().expect("decision store poisoned");
+            let path = self.root.join(run_id).join(format!("{kind}-{id}.json"));
+            match fs::remove_file(path) {
+                Ok(()) => Ok(()),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                Err(error) => Err(error.into()),
+            }
+        }
+
+        fn load_run_locked(&self, state: &mut State, run_id: &str) -> Result<()> {
+            if state.runs.contains_key(run_id) {
+                return Ok(());
+            }
+            let directory = self.root.join(run_id);
+            let mut run = RunState::default();
+            let mut interrupted = Vec::new();
+            match fs::read_dir(&directory) {
+                Ok(entries) => {
+                    for entry in entries {
+                        let entry = entry?;
+                        if !entry.file_type()?.is_file() {
+                            continue;
+                        }
+                        let filename = entry.file_name();
+                        let filename = filename.to_string_lossy();
+                        let bytes = fs::read(entry.path())?;
+                        if filename.starts_with("source-") && filename.ends_with(".json") {
+                            let source: DecisionSource = serde_json::from_slice(&bytes)
+                                .context("read persisted decision source")?;
+                            run.coverage = combine_coverage(run.coverage, source.coverage);
+                            run.sources.insert(source.source_id.clone(), source);
+                        } else if filename.starts_with("decision-") && filename.ends_with(".json") {
+                            let mut record: DecisionRecord = serde_json::from_slice(&bytes)
+                                .context("read persisted decision")?;
+                            if matches!(
+                                record.status,
+                                DecisionStatus::Queued | DecisionStatus::Evaluating
+                            ) {
+                                record.status = DecisionStatus::Failed;
+                                record.reason_code = "interrupted".to_string();
+                                record.error = Some(
+                                    "the daemon restarted before this evaluation completed"
+                                        .to_string(),
+                                );
+                                record.completed_at = Some(now_unix());
+                                interrupted.push(record.clone());
+                            }
+                            run.coverage = combine_coverage(run.coverage, record.coverage);
+                            run.requests
+                                .insert(record.request_id.clone(), record.decision_id.clone());
+                            run.fingerprints.insert(
+                                record.request_fingerprint.clone(),
+                                record.decision_id.clone(),
+                            );
+                            run.decisions.insert(record.decision_id.clone(), record);
+                        } else if filename.starts_with("feedback-") && filename.ends_with(".json") {
+                            let feedback: FeedbackRequest = serde_json::from_slice(&bytes)
+                                .context("read persisted decision feedback")?;
+                            run.feedback.insert(feedback.request_id.clone(), feedback);
+                        }
+                    }
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
+            for record in interrupted {
+                self.persist(run_id, "decision", &record.decision_id, &record)?;
+            }
+            // Safety over convenience: an observer is not resumed after a
+            // daemon restart. The operator must enable a new run explicitly.
+            run.mode = DecisionMode::Off;
+            state.runs.insert(run_id.to_string(), run);
+            Ok(())
         }
     }
 
@@ -637,6 +1111,8 @@ mod enabled {
         suggestion: String,
         confidence: f64,
         selected_probability: f64,
+        owner_probabilities: BTreeMap<String, f64>,
+        context_probabilities: BTreeMap<String, f64>,
         reason_code: String,
         model: String,
     }
@@ -655,20 +1131,20 @@ mod enabled {
             {
                 anyhow::bail!("unexpected question id")
             }
-            if answer.probabilities.is_empty()
-                || answer
-                    .probabilities
-                    .values()
-                    .any(|p| !p.is_finite() || !(0.0..=1.0).contains(p))
-            {
-                anyhow::bail!("invalid probability")
-            }
-            let sum: f64 = answer.probabilities.values().sum();
-            if (sum - 1.0).abs() > 0.001 {
-                anyhow::bail!("probabilities do not sum to one")
-            }
         }
         let owner = found.get("owner").unwrap();
+        validate_distribution(
+            owner,
+            "single_choice",
+            &[
+                "backend",
+                "frontend",
+                "design",
+                "qa",
+                "multiple",
+                "uncertain",
+            ],
+        )?;
         let Some(choice) = owner.selected.as_deref() else {
             anyhow::bail!("owner choice missing")
         };
@@ -680,12 +1156,45 @@ mod enabled {
             anyhow::bail!("invalid owner choice")
         }
         let context = found.get("sufficient_context").unwrap();
-        if context.selected.as_deref() != Some("true")
-            || !context.probabilities.contains_key("true")
-        {
-            anyhow::bail!("invalid sufficient_context answer")
-        }
+        validate_distribution(context, "boolean", &["true", "false"])?;
         Ok(response)
+    }
+
+    fn validate_distribution(
+        answer: &ProviderAnswer,
+        expected_kind: &str,
+        allowed_labels: &[&str],
+    ) -> Result<()> {
+        if answer.kind != expected_kind
+            || answer.probabilities.len() != allowed_labels.len()
+            || allowed_labels
+                .iter()
+                .any(|label| !answer.probabilities.contains_key(*label))
+            || answer
+                .probabilities
+                .values()
+                .any(|probability| !probability.is_finite() || !(0.0..=1.0).contains(probability))
+        {
+            anyhow::bail!("invalid Jev answer distribution")
+        }
+        let sum: f64 = answer.probabilities.values().sum();
+        if (sum - 1.0).abs() > 0.000_001 {
+            anyhow::bail!("probabilities do not sum to one")
+        }
+        let selected = answer
+            .selected
+            .as_deref()
+            .filter(|label| allowed_labels.contains(label))
+            .ok_or_else(|| anyhow!("selected label is not allowed"))?;
+        let selected_probability = answer.probabilities[selected];
+        if answer
+            .probabilities
+            .values()
+            .any(|probability| *probability > selected_probability)
+        {
+            anyhow::bail!("selected label is not the maximum-probability choice")
+        }
+        Ok(())
     }
 
     fn policy(response: ProviderResponse) -> PolicyOutcome {
@@ -703,7 +1212,10 @@ mod enabled {
         let selected_probability = owner.probabilities[choice];
         let confidence = context.probabilities["true"];
         let specific = matches!(choice, "backend" | "frontend" | "design" | "qa");
-        let qualifies = specific && selected_probability >= 0.90 && confidence >= 0.90;
+        let qualifies = specific
+            && context.selected.as_deref() == Some("true")
+            && selected_probability >= 0.90
+            && confidence >= 0.90;
         PolicyOutcome {
             suggestion: if qualifies {
                 choice.to_string()
@@ -712,6 +1224,8 @@ mod enabled {
             },
             confidence,
             selected_probability,
+            owner_probabilities: owner.probabilities.clone(),
+            context_probabilities: context.probabilities.clone(),
             reason_code: if qualifies {
                 "high_confidence_owner".to_string()
             } else {
@@ -721,8 +1235,22 @@ mod enabled {
         }
     }
 
-    fn is_review_output(reaction_id: &str, port: &str) -> bool {
-        reaction_id.contains("review") && port == "review"
+    fn is_review_output(config: &DecisionSupportConfig, reaction_id: &str, port: &str) -> bool {
+        port == "review"
+            && config
+                .review_owner_reactions
+                .iter()
+                .any(|enrolled| enrolled == reaction_id)
+    }
+
+    fn combine_coverage(left: DecisionCoverage, right: DecisionCoverage) -> DecisionCoverage {
+        match (left, right) {
+            (DecisionCoverage::Partial, _) | (_, DecisionCoverage::Partial) => {
+                DecisionCoverage::Partial
+            }
+            (DecisionCoverage::Stale, _) | (_, DecisionCoverage::Stale) => DecisionCoverage::Stale,
+            _ => DecisionCoverage::Continuous,
+        }
     }
     fn now_unix() -> i64 {
         SystemTime::now()
@@ -732,6 +1260,17 @@ mod enabled {
     }
     fn sha256(text: &str) -> String {
         format!("{:x}", Sha256::digest(text.as_bytes()))
+    }
+    fn request_fingerprint(run_id: &str, request: &EvaluateRequest, selected: &str) -> String {
+        sha256(&format!(
+            "{run_id}\n{}\n{}\n{}\n{}\n{}\n{}",
+            request.profile_id,
+            request.source_id,
+            request.source_sha256,
+            request.selection_start,
+            request.selection_end,
+            sha256(selected),
+        ))
     }
     fn truncate_utf8(text: &str, max: usize) -> String {
         if text.len() <= max {
@@ -751,6 +1290,47 @@ mod enabled {
         let begin = chars[start].0;
         let finish = chars.get(end).map(|(i, _)| *i).unwrap_or(text.len());
         Ok(text[begin..finish].to_string())
+    }
+
+    fn directory_size(path: &Path) -> Result<u64> {
+        let entries = match fs::read_dir(path) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+            Err(error) => return Err(error.into()),
+        };
+        let mut total = 0u64;
+        for entry in entries {
+            let entry = entry?;
+            let file_type = entry.file_type()?;
+            if file_type.is_file() {
+                total = total.saturating_add(entry.metadata()?.len());
+            } else if file_type.is_dir() {
+                total = total.saturating_add(directory_size(&entry.path())?);
+            }
+        }
+        Ok(total)
+    }
+
+    fn page_records<T: Clone>(
+        records: &BTreeMap<String, T>,
+        cursor: Option<&str>,
+    ) -> Result<(Vec<T>, Option<String>)> {
+        if let Some(cursor) = cursor {
+            if !records.contains_key(cursor) {
+                anyhow::bail!("invalid cursor")
+            }
+        }
+        let entries: Vec<_> = records
+            .iter()
+            .filter(|(id, _)| cursor.is_none_or(|cursor| id.as_str() > cursor))
+            .collect();
+        let next_cursor = (entries.len() > 50).then(|| entries[49].0.clone());
+        let page = entries
+            .into_iter()
+            .take(50)
+            .map(|(_, value)| value.clone())
+            .collect();
+        Ok((page, next_cursor))
     }
 
     fn write_private(directory: &Path, filename: &str, bytes: &[u8]) -> Result<()> {
@@ -781,33 +1361,86 @@ mod enabled {
     #[cfg(test)]
     mod tests {
         use super::*;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::{Condvar, Mutex};
         use tempfile::tempdir;
 
-        struct FakeProvider;
+        struct FakeProvider {
+            calls: Arc<AtomicUsize>,
+        }
 
         impl Provider for FakeProvider {
             fn evaluate(&self, _selected: &str) -> Result<ProviderResponse> {
-                Ok(ProviderResponse {
-                    model: "jev-1.13.0".to_string(),
-                    answers: vec![
-                        ProviderAnswer {
-                            question_id: "owner".to_string(),
-                            selected: Some("backend".to_string()),
-                            probabilities: BTreeMap::from([
-                                ("backend".to_string(), 0.95),
-                                ("frontend".to_string(), 0.05),
-                            ]),
-                        },
-                        ProviderAnswer {
-                            question_id: "sufficient_context".to_string(),
-                            selected: Some("true".to_string()),
-                            probabilities: BTreeMap::from([
-                                ("true".to_string(), 0.95),
-                                ("false".to_string(), 0.05),
-                            ]),
-                        },
-                    ],
-                })
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                Ok(valid_response())
+            }
+        }
+
+        struct BlockingProvider {
+            calls: Arc<AtomicUsize>,
+            started: mpsc::Sender<()>,
+            gate: Arc<(Mutex<bool>, Condvar)>,
+        }
+
+        impl Provider for BlockingProvider {
+            fn evaluate(&self, _selected: &str) -> Result<ProviderResponse> {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                let _ = self.started.send(());
+                let (locked, wake) = &*self.gate;
+                let mut released = locked.lock().unwrap();
+                while !*released {
+                    released = wake.wait(released).unwrap();
+                }
+                Ok(valid_response())
+            }
+        }
+
+        fn valid_response() -> ProviderResponse {
+            ProviderResponse {
+                model: JEV_MODEL.to_string(),
+                answers: vec![
+                    ProviderAnswer {
+                        question_id: "owner".to_string(),
+                        kind: "single_choice".to_string(),
+                        selected: Some("backend".to_string()),
+                        probabilities: BTreeMap::from([
+                            ("backend".to_string(), 0.95),
+                            ("frontend".to_string(), 0.05),
+                            ("design".to_string(), 0.0),
+                            ("qa".to_string(), 0.0),
+                            ("multiple".to_string(), 0.0),
+                            ("uncertain".to_string(), 0.0),
+                        ]),
+                    },
+                    ProviderAnswer {
+                        question_id: "sufficient_context".to_string(),
+                        kind: "boolean".to_string(),
+                        selected: Some("true".to_string()),
+                        probabilities: BTreeMap::from([
+                            ("true".to_string(), 0.95),
+                            ("false".to_string(), 0.05),
+                        ]),
+                    },
+                ],
+            }
+        }
+
+        fn request(source: &DecisionSource, request_id: &str) -> EvaluateRequest {
+            EvaluateRequest {
+                request_id: request_id.to_string(),
+                profile_id: "review-owner-v1".to_string(),
+                source_id: source.source_id.clone(),
+                source_sha256: source.sha256.clone(),
+                selection_start: 0,
+                selection_end: 6,
+            }
+        }
+
+        fn test_config() -> DecisionSupportConfig {
+            DecisionSupportConfig {
+                enabled: true,
+                review_owner_reactions: vec!["reaction::review".to_string()],
+                ..DecisionSupportConfig::default()
             }
         }
 
@@ -822,14 +1455,20 @@ mod enabled {
                 answers: vec![
                     ProviderAnswer {
                         question_id: "owner".to_string(),
+                        kind: "single_choice".to_string(),
                         selected: Some("backend".to_string()),
                         probabilities: BTreeMap::from([
                             ("backend".to_string(), 0.91),
                             ("frontend".to_string(), 0.09),
+                            ("design".to_string(), 0.0),
+                            ("qa".to_string(), 0.0),
+                            ("multiple".to_string(), 0.0),
+                            ("uncertain".to_string(), 0.0),
                         ]),
                     },
                     ProviderAnswer {
                         question_id: "sufficient_context".to_string(),
+                        kind: "boolean".to_string(),
                         selected: Some("true".to_string()),
                         probabilities: BTreeMap::from([
                             ("true".to_string(), 0.89),
@@ -848,21 +1487,34 @@ mod enabled {
         fn off_is_inert_and_selected_source_is_bound_by_digest() {
             let dir = tempdir().unwrap();
             let service = DecisionService::with_test_provider(
-                DecisionSupportConfig {
-                    enabled: true,
-                    ..DecisionSupportConfig::default()
-                },
+                test_config(),
                 dir.path(),
-                Arc::new(FakeProvider),
+                Arc::new(FakeProvider {
+                    calls: Arc::new(AtomicUsize::new(0)),
+                }),
             );
             assert!(service
-                .capture("run", "reaction::review", "review", "review text")
+                .capture(
+                    "run",
+                    "reaction::review",
+                    "invocation-1",
+                    1,
+                    "review",
+                    "review text"
+                )
                 .unwrap()
                 .is_none());
             assert!(!service.state.lock().unwrap().workers_started);
             service.set_mode("run", DecisionMode::Suggest).unwrap();
             let source = service
-                .capture("run", "reaction::review", "review", "review text")
+                .capture(
+                    "run",
+                    "reaction::review",
+                    "invocation-1",
+                    1,
+                    "review",
+                    "review text abc",
+                )
                 .unwrap()
                 .unwrap();
             let rejected = service.evaluate(
@@ -904,6 +1556,253 @@ mod enabled {
                 .join("decisions/run")
                 .join(format!("source-{}.json", source.source_id))
                 .exists());
+        }
+
+        #[test]
+        fn invalid_provider_distributions_are_rejected() {
+            let mut response = valid_response();
+            response.answers[0]
+                .probabilities
+                .insert("unapproved".to_string(), 0.0);
+            assert!(validate_response(response).is_err());
+
+            let mut response = valid_response();
+            response.answers[0].kind = "boolean".to_string();
+            assert!(validate_response(response).is_err());
+
+            let mut response = valid_response();
+            response.answers[0].selected = Some("frontend".to_string());
+            assert!(validate_response(response).is_err());
+
+            let mut response = valid_response();
+            response.answers[1].selected = Some("false".to_string());
+            response.answers[1]
+                .probabilities
+                .insert("true".to_string(), 0.05);
+            response.answers[1]
+                .probabilities
+                .insert("false".to_string(), 0.95);
+            assert_eq!(
+                policy(validate_response(response).unwrap()).suggestion,
+                "needs_review"
+            );
+
+            let mut response = valid_response();
+            response.answers[0]
+                .probabilities
+                .insert("backend".to_string(), 0.9499);
+            assert!(validate_response(response).is_err());
+        }
+
+        #[test]
+        fn result_pages_are_stable_and_limited_to_fifty_records() {
+            let records = (0..51)
+                .map(|index| (format!("record-{index:03}"), index))
+                .collect::<BTreeMap<_, _>>();
+            let (first, next) = page_records(&records, None).unwrap();
+            assert_eq!(first.len(), 50);
+            assert_eq!(next.as_deref(), Some("record-049"));
+            let (second, next) = page_records(&records, next.as_deref()).unwrap();
+            assert_eq!(second, vec![50]);
+            assert!(next.is_none());
+            assert!(page_records(&records, Some("missing")).is_err());
+        }
+
+        #[test]
+        fn persisted_requests_are_reloaded_and_remain_idempotent() {
+            let dir = tempdir().unwrap();
+            let calls = Arc::new(AtomicUsize::new(0));
+            let provider: Arc<dyn Provider> = Arc::new(FakeProvider {
+                calls: calls.clone(),
+            });
+            let config = test_config();
+            let service =
+                DecisionService::with_test_provider(config.clone(), dir.path(), provider.clone());
+            service.set_mode("run", DecisionMode::Suggest).unwrap();
+            let source = service
+                .capture(
+                    "run",
+                    "reaction::review",
+                    "invocation-1",
+                    1,
+                    "review",
+                    "review text",
+                )
+                .unwrap()
+                .unwrap();
+            let first = service
+                .evaluate("run", request(&source, "request-1"))
+                .unwrap();
+            for _ in 0..50 {
+                if service.decisions("run").0[0].status == DecisionStatus::Ready {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            drop(service);
+
+            let restarted = DecisionService::with_test_provider(config, dir.path(), provider);
+            assert_eq!(restarted.sources("run").0[0].invocation_id, "invocation-1");
+            restarted.set_mode("run", DecisionMode::Suggest).unwrap();
+            let repeated = restarted
+                .evaluate("run", request(&source, "request-1"))
+                .unwrap();
+            assert_eq!(repeated.decision_id, first.decision_id);
+            assert_eq!(
+                calls.load(Ordering::SeqCst),
+                1,
+                "queued work reached provider"
+            );
+        }
+
+        #[test]
+        fn duplicate_selection_is_deduplicated_and_request_ids_are_bound() {
+            let dir = tempdir().unwrap();
+            let service = DecisionService::with_test_provider(
+                test_config(),
+                dir.path(),
+                Arc::new(FakeProvider {
+                    calls: Arc::new(AtomicUsize::new(0)),
+                }),
+            );
+            service.set_mode("run", DecisionMode::Suggest).unwrap();
+            let source = service
+                .capture(
+                    "run",
+                    "reaction::review",
+                    "invocation-1",
+                    1,
+                    "review",
+                    "review text",
+                )
+                .unwrap()
+                .unwrap();
+            let first = service.evaluate("run", request(&source, "one")).unwrap();
+            let duplicate = service.evaluate("run", request(&source, "two")).unwrap();
+            assert_eq!(first.decision_id, duplicate.decision_id);
+
+            let mut changed = request(&source, "one");
+            changed.selection_end = 7;
+            assert!(service.evaluate("run", changed).is_err());
+        }
+
+        #[test]
+        fn coverage_gaps_stale_existing_records_and_survive_restart() {
+            let dir = tempdir().unwrap();
+            let service = DecisionService::with_test_provider(
+                test_config(),
+                dir.path(),
+                Arc::new(FakeProvider {
+                    calls: Arc::new(AtomicUsize::new(0)),
+                }),
+            );
+            service.set_mode("run", DecisionMode::Suggest).unwrap();
+            let source = service
+                .capture(
+                    "run",
+                    "reaction::review",
+                    "invocation-1",
+                    1,
+                    "review",
+                    "review text",
+                )
+                .unwrap()
+                .unwrap();
+            service.evaluate("run", request(&source, "one")).unwrap();
+            service.mark_coverage("run", DecisionCoverage::Partial);
+            assert!(service
+                .sources("run")
+                .0
+                .iter()
+                .all(|source| source.coverage == DecisionCoverage::Partial));
+            assert!(service.decisions("run").0.iter().all(|record| {
+                record.coverage == DecisionCoverage::Partial && record.freshness == "stale"
+            }));
+            drop(service);
+
+            let restarted = DecisionService::with_test_provider(
+                test_config(),
+                dir.path(),
+                Arc::new(FakeProvider {
+                    calls: Arc::new(AtomicUsize::new(0)),
+                }),
+            );
+            assert_eq!(restarted.decisions("run").1, DecisionCoverage::Partial);
+        }
+
+        #[test]
+        fn disabling_run_prevents_queued_provider_calls_and_late_results() {
+            let dir = tempdir().unwrap();
+            let calls = Arc::new(AtomicUsize::new(0));
+            let (started, started_rx) = mpsc::channel();
+            let gate = Arc::new((Mutex::new(false), Condvar::new()));
+            let service = DecisionService::with_test_provider(
+                test_config(),
+                dir.path(),
+                Arc::new(BlockingProvider {
+                    calls: calls.clone(),
+                    started,
+                    gate: gate.clone(),
+                }),
+            );
+            service.set_mode("run", DecisionMode::Suggest).unwrap();
+            let source = service
+                .capture(
+                    "run",
+                    "reaction::review",
+                    "invocation-1",
+                    1,
+                    "review",
+                    "review text abc",
+                )
+                .unwrap()
+                .unwrap();
+            let mut requested = Vec::new();
+            for (offset, request_id) in ["one", "two", "three"].into_iter().enumerate() {
+                let mut evaluation = request(&source, request_id);
+                evaluation.selection_end += offset;
+                requested.push(service.evaluate("run", evaluation).unwrap());
+            }
+            started_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+            thread::scope(|scope| {
+                let stopping = scope.spawn(|| service.set_mode("run", DecisionMode::Off));
+                for _ in 0..50 {
+                    if service
+                        .dispatch_gate
+                        .state
+                        .lock()
+                        .unwrap()
+                        .transition_pending
+                    {
+                        break;
+                    }
+                    thread::sleep(Duration::from_millis(10));
+                }
+                assert!(
+                    service
+                        .dispatch_gate
+                        .state
+                        .lock()
+                        .unwrap()
+                        .transition_pending
+                );
+                let (locked, wake) = &*gate;
+                *locked.lock().unwrap() = true;
+                wake.notify_all();
+                stopping.join().unwrap().unwrap();
+            });
+            assert_eq!(calls.load(Ordering::SeqCst), 2);
+            let records = service.decisions("run").0;
+            for queued in &requested[2..] {
+                assert_eq!(
+                    records
+                        .iter()
+                        .find(|record| record.decision_id == queued.decision_id)
+                        .unwrap()
+                        .status,
+                    DecisionStatus::Failed
+                );
+            }
         }
     }
 

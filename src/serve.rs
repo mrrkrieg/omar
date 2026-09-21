@@ -582,12 +582,15 @@ fn handle_client(mut stream: TcpStream, workspaces: Arc<Workspaces>) -> Result<(
     reader.read_line(&mut request_line)?;
     let mut parts = request_line.split_whitespace();
     let method = parts.next().unwrap_or("").to_string();
-    let mut path = parts.next().unwrap_or("").to_string();
+    let request_target = parts.next().unwrap_or("");
     // Assist pagination is query-based. Routing must operate on the pathname
     // so a cursor cannot accidentally become part of a run id.
-    if let Some((pathname, _)) = path.split_once('?') {
-        path = pathname.to_string();
-    }
+    let (mut path, query) = match request_target.split_once('?') {
+        Some((pathname, query)) => (pathname.to_string(), Some(query)),
+        None => (request_target.to_string(), None),
+    };
+    #[cfg(not(feature = "decision-support"))]
+    let _ = query;
 
     let mut content_length = 0usize;
     let mut origin = None;
@@ -839,7 +842,7 @@ fn handle_client(mut stream: TcpStream, workspaces: Arc<Workspaces>) -> Result<(
         }
         #[cfg(feature = "decision-support")]
         ("GET", rest) if rest.starts_with("/v1/assist/runs/") && rest.ends_with("/sources") => {
-            assist_sources(&context, rest)
+            assist_sources(&context, rest, query)
         }
         #[cfg(feature = "decision-support")]
         ("POST", rest)
@@ -856,7 +859,7 @@ fn handle_client(mut stream: TcpStream, workspaces: Arc<Workspaces>) -> Result<(
         }
         #[cfg(feature = "decision-support")]
         ("GET", rest) if rest.starts_with("/v1/assist/runs/") && rest.ends_with("/decisions") => {
-            assist_decisions(&context, rest)
+            assist_decisions(&context, rest, query)
         }
         #[cfg(feature = "decision-support")]
         ("POST", rest)
@@ -1595,43 +1598,72 @@ fn assist_set_mode(context: &Arc<Context_>, route: &str, body: &[u8]) -> (u16, V
 }
 
 #[cfg(feature = "decision-support")]
-fn assist_sources(context: &Arc<Context_>, route: &str) -> (u16, Value) {
+fn assist_sources(context: &Arc<Context_>, route: &str, query: Option<&str>) -> (u16, Value) {
     let Some(run_id) = assist_run_id(route, "/sources") else {
         return (404, json!({"error": "not found"}));
     };
-    if !context
+    let is_live_run = context
         .runs
         .lock()
         .expect("serve runs poisoned")
-        .contains_key(run_id)
-    {
+        .contains_key(run_id);
+    if !context.decisions.may_read_run(run_id, is_live_run) {
         return (404, json!({"error": "unknown run"}));
     }
-    let (sources, coverage) = context.decisions.sources(run_id);
-    (
-        200,
-        json!({"sources": sources, "coverage": coverage, "next_cursor": Value::Null}),
-    )
+    let cursor = match assist_cursor(query) {
+        Ok(cursor) => cursor,
+        Err(error) => return (400, json!({"error": error})),
+    };
+    match context.decisions.sources_page(run_id, cursor.as_deref()) {
+        Ok((sources, coverage, next_cursor)) => (
+            200,
+            json!({"sources": sources, "coverage": coverage, "next_cursor": next_cursor}),
+        ),
+        Err(error) => (400, json!({"error": error.to_string()})),
+    }
 }
 
 #[cfg(feature = "decision-support")]
-fn assist_decisions(context: &Arc<Context_>, route: &str) -> (u16, Value) {
+fn assist_decisions(context: &Arc<Context_>, route: &str, query: Option<&str>) -> (u16, Value) {
     let Some(run_id) = assist_run_id(route, "/decisions") else {
         return (404, json!({"error": "not found"}));
     };
-    if !context
+    let is_live_run = context
         .runs
         .lock()
         .expect("serve runs poisoned")
-        .contains_key(run_id)
-    {
+        .contains_key(run_id);
+    if !context.decisions.may_read_run(run_id, is_live_run) {
         return (404, json!({"error": "unknown run"}));
     }
-    let (decisions, coverage) = context.decisions.decisions(run_id);
-    (
-        200,
-        json!({"decisions": decisions, "coverage": coverage, "next_cursor": Value::Null}),
-    )
+    let cursor = match assist_cursor(query) {
+        Ok(cursor) => cursor,
+        Err(error) => return (400, json!({"error": error})),
+    };
+    match context.decisions.decisions_page(run_id, cursor.as_deref()) {
+        Ok((decisions, coverage, next_cursor)) => (
+            200,
+            json!({"decisions": decisions, "coverage": coverage, "next_cursor": next_cursor}),
+        ),
+        Err(error) => (400, json!({"error": error.to_string()})),
+    }
+}
+
+#[cfg(feature = "decision-support")]
+fn assist_cursor(query: Option<&str>) -> Result<Option<String>, &'static str> {
+    let Some(query) = query else {
+        return Ok(None);
+    };
+    let mut cursor = None;
+    for parameter in query.split('&') {
+        let Some(value) = parameter.strip_prefix("cursor=") else {
+            continue;
+        };
+        if value.is_empty() || cursor.replace(value.to_string()).is_some() {
+            return Err("invalid cursor");
+        }
+    }
+    Ok(cursor)
 }
 
 #[cfg(feature = "decision-support")]

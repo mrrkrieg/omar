@@ -222,11 +222,12 @@ pub fn generate() -> String {
     }
     // ts-rs emits a space before a following doc block for a few field shapes.
     // Normalise lines here so generated protocol changes remain clean diffs.
-    out.lines()
+    let generated = out
+        .lines()
         .map(str::trim_end)
         .collect::<Vec<_>>()
-        .join("\n")
-        + "\n"
+        .join("\n");
+    format!("{}\n", generated.trim_end())
 }
 
 #[cfg(test)]

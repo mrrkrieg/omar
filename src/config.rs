@@ -104,6 +104,10 @@ pub struct DecisionSupportConfig {
     pub timeout_seconds: u64,
     #[serde(default = "default_decision_retention")]
     pub retention_days: u64,
+    /// Fully-qualified reaction IDs enrolled in the `review-owner-v1`
+    /// profile. The service never infers eligibility from a reaction name.
+    #[serde(default)]
+    pub review_owner_reactions: Vec<String>,
 }
 
 fn default_typesafe_base_url() -> String {
@@ -125,6 +129,7 @@ impl Default for DecisionSupportConfig {
             typesafe_base_url: default_typesafe_base_url(),
             timeout_seconds: default_decision_timeout(),
             retention_days: default_decision_retention(),
+            review_owner_reactions: Vec::new(),
         }
     }
 }

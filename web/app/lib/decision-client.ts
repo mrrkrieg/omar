@@ -28,18 +28,33 @@ export async function setDecisionMode(serveUrl: string, runId: string, mode: Dec
   if (!response.ok) throw new Error(await readError(response));
 }
 
+async function fetchDecisionPages<T>(url: string, field: "sources" | "decisions"): Promise<T[]> {
+  const records: T[] = [];
+  let cursor: string | null = null;
+  for (let page = 0; page < 3; page += 1) {
+    const response = await fetch(cursor ? `${url}?cursor=${encodeURIComponent(cursor)}` : url);
+    if (!response.ok) throw new Error(await readError(response));
+    const body = (await response.json()) as {
+      sources?: DecisionSource[]; decisions?: DecisionRecord[]; next_cursor?: unknown;
+    };
+    const values = body[field];
+    if (Array.isArray(values)) records.push(...(values as T[]));
+    cursor = typeof body.next_cursor === "string" && body.next_cursor.length > 0 ? body.next_cursor : null;
+    if (!cursor) return records;
+  }
+  throw new Error("Decision support returned too many pages.");
+}
+
 export async function fetchDecisionSources(serveUrl: string, runId: string): Promise<DecisionSource[]> {
-  const response = await fetch(`${normalizeRuntimeUrl(serveUrl)}/v1/assist/runs/${encodeURIComponent(runId)}/sources`);
-  if (!response.ok) throw new Error(await readError(response));
-  const body = (await response.json()) as { sources?: DecisionSource[] };
-  return Array.isArray(body.sources) ? body.sources : [];
+  return fetchDecisionPages<DecisionSource>(
+    `${normalizeRuntimeUrl(serveUrl)}/v1/assist/runs/${encodeURIComponent(runId)}/sources`, "sources",
+  );
 }
 
 export async function fetchDecisions(serveUrl: string, runId: string): Promise<DecisionRecord[]> {
-  const response = await fetch(`${normalizeRuntimeUrl(serveUrl)}/v1/assist/runs/${encodeURIComponent(runId)}/decisions`);
-  if (!response.ok) throw new Error(await readError(response));
-  const body = (await response.json()) as { decisions?: DecisionRecord[] };
-  return Array.isArray(body.decisions) ? body.decisions : [];
+  return fetchDecisionPages<DecisionRecord>(
+    `${normalizeRuntimeUrl(serveUrl)}/v1/assist/runs/${encodeURIComponent(runId)}/decisions`, "decisions",
+  );
 }
 
 export async function evaluateDecision(serveUrl: string, runId: string, request: {

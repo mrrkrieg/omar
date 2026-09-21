@@ -15,6 +15,8 @@ configuration. The per-run mode still defaults to `off`.
 enabled = true
 # Jev is pinned to `jev-1.13.0`; three seconds is the default timeout.
 timeout_seconds = 3
+# Enroll exact reaction IDs in the review-owner profile.
+review_owner_reactions = ["reaction::independent_reviewer"]
 ```
 
 Set `TYPESAFE_API_KEY` in the environment of `omar serve`. It is read only by
@@ -29,9 +31,11 @@ the clipboard; it never sends a message or changes a workflow.
 
 `off` is the default and starts no capture or provider work. `shadow` captures
 eligible review output for local inspection. `suggest` enables operator-requested
-evaluations. Only review reactions writing to a `review` port are captured, and
-the observer connects to the daemon-issued loopback diagram stream after run
-admission. A stale or interrupted stream is labelled partial instead of being
+evaluations. The `review-owner-v1` profile captures only the exact reaction IDs
+enrolled in `review_owner_reactions` when they write a `review` port. Each
+source records its reaction invocation and diagram event sequence. The observer
+connects to the daemon-issued loopback diagram stream after run admission. A
+late, stale, interrupted, or gapped stream is labelled partial instead of being
 silently treated as complete.
 
 The service uses two bounded workers (depth 32), limits a run to 100 requests,
@@ -48,9 +52,16 @@ and the response's explicit selection. `multiple`, `uncertain`, malformed, or
 lower-confidence responses become `needs_review`.
 
 Records live under `<omar_dir>/decisions/<run_id>/` with private permissions and
-atomic file replacement. They contain source digests, filtered requests,
-validated responses, decision status, coverage, and feedback. They never
-contain the TypeSafe API key.
+atomic file replacement. They are reloaded after a daemon restart so request
+IDs stay idempotent and a repeated selection is deduplicated. A request ID is
+bound to its selected source and range, so it cannot be reused for other
+content. They contain source digests, filtered requests, validated responses,
+including the normalized probability distributions, decision status, coverage,
+and feedback. Disabling a run waits for an already
+dispatched bounded call, then invalidates queued work before it can become a
+new suggestion. Records outside `retention_days` are unavailable through the
+API, and the private store stops accepting new records at 16 MiB rather than
+silently evicting evidence. They never contain the TypeSafe API key.
 
 The local API is loopback-only:
 
@@ -60,6 +71,9 @@ The local API is loopback-only:
 - `POST /v1/assist/runs/{id}/evaluations`
 - `GET /v1/assist/runs/{id}/decisions`
 - `POST /v1/assist/runs/{id}/decisions/{decision_id}/feedback`
+
+The source and decision list routes return at most 50 records. Follow their
+opaque `next_cursor` value with `?cursor=...` to retrieve the next page.
 
 Mutating routes reject non-loopback browser origins. A client talking to an
 older daemon receives no Suggestions tab, preserving the existing product

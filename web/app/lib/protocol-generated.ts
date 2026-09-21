@@ -135,12 +135,30 @@ export type RunRecord = { run_id: string, team: string, status: RunStatus, diagr
 
 export type DecisionCapabilities = { available: boolean, configured: boolean, model: string, modes: Array<DecisionMode>, max_requests_per_run: number, max_source_bytes: number, };
 
-export type DecisionSource = { source_id: string, run_id: string, reaction_id: string, port: string, sha256: string, captured_at: number, coverage: DecisionCoverage,
+export type DecisionSource = { source_id: string, run_id: string, reaction_id: string,
+/**
+ * The exact reaction invocation that produced this excerpt.  This keeps
+ * a suggestion tied to its observed run event, even when the reaction
+ * executes again later in the same run.
+ */
+invocation_id: string,
+/**
+ * Diagram event sequence at which this output was observed.
+ */
+sequence: number, port: string, sha256: string, captured_at: number, coverage: DecisionCoverage,
 /**
  * Kept on the loopback-only local API so the operator can select the
  * exact excerpt to evaluate. It is never sent until explicitly selected.
  */
 text: string, };
 
-export type DecisionRecord = { decision_id: string, request_id: string, run_id: string, source_id: string, source_sha256: string, profile_id: string, mode: DecisionMode, status: DecisionStatus, coverage: DecisionCoverage, freshness: string, reason_code: string, suggestion: string, confidence: number, selected_probability: number, model: string | null, created_at: number, completed_at: number | null, error: string | null, };
-
+export type DecisionRecord = { decision_id: string, request_id: string,
+/**
+ * Stable binding of the idempotency key to the selected source and scalar
+ * range. A reused request ID may not silently address other content.
+ */
+request_fingerprint: string,
+/**
+ * Unicode scalar offsets into the persisted source excerpt.
+ */
+selection_start: number, selection_end: number, run_id: string, source_id: string, source_sha256: string, profile_id: string, mode: DecisionMode, status: DecisionStatus, coverage: DecisionCoverage, freshness: string, reason_code: string, suggestion: string, confidence: number, selected_probability: number, owner_probabilities: { [key in string]: number }, context_probabilities: { [key in string]: number }, model: string | null, created_at: number, completed_at: number | null, error: string | null, };
