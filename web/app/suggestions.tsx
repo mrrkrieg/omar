@@ -97,7 +97,7 @@ export function Suggestions({ serveUrl, runId, capabilities }: Props) {
     {message ? <p className="suggestions-message">{message}</p> : null}
     {decisions.map((decision) => <article className="suggestion-card" key={decision.decision_id}>
       <b>{decision.status === "suggested" ? `Suggested owner: ${decision.suggestion.replaceAll("_", " ")}` : decision.status.replaceAll("_", " ")}</b>
-      <span>{decision.status} · confidence {Math.round(decision.confidence * 100)}%</span>
+      <span>{decision.status} · {decision.confidence === null ? "confidence unavailable" : `confidence ${Math.round(decision.confidence * 100)}%`}</span>
       <small>{decision.reason_code} · {decision.coverage.replaceAll("_", " ")} · {decision.freshness}</small>
       {decision.model ? <small>Jev {decision.model}</small> : null}
       {decision.status === "suggested" || decision.status === "needs_review" ? <div>

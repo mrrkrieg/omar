@@ -1845,12 +1845,23 @@ fn start_run(context: &Arc<Context_>, body: &[u8]) -> (u16, Value) {
 
     match ready_receiver.recv_timeout(DIAGRAM_READY_TIMEOUT) {
         Ok(diagram_address) => {
-            let mut runs = context.runs.lock().expect("serve runs poisoned");
-            if let Some(record) = runs.get_mut(&run_id) {
-                record.diagram_address = Some(diagram_address.to_string());
-                if record.status == RunStatus::Starting {
-                    record.status = RunStatus::Running;
+            let record = {
+                let mut runs = context.runs.lock().expect("serve runs poisoned");
+                if let Some(record) = runs.get_mut(&run_id) {
+                    record.diagram_address = Some(diagram_address.to_string());
+                    if record.status == RunStatus::Starting {
+                        record.status = RunStatus::Running;
+                    }
+                    Some(record.clone())
+                } else {
+                    None
                 }
+            };
+            if let Some(record) = record {
+                #[cfg(feature = "decision-support")]
+                context
+                    .decisions
+                    .enable_default_for_run(run_id.clone(), diagram_address);
                 return (201, json!(record));
             }
             (500, json!({"error": "run vanished"}))

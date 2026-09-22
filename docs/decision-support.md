@@ -33,9 +33,12 @@ the clipboard; it never sends a message or changes a workflow.
 
 ## Modes and scope
 
-`off` is the default and starts no capture or provider work. `shadow` captures
-eligible review output for local inspection. `suggest` enables operator-requested
-evaluations. The `review-owner-v1` profile captures only the exact reaction IDs
+`off` starts no capture or provider work. `shadow` captures eligible review
+output for local inspection. `suggest` enables operator-requested evaluations.
+The default is `off`, but an explicit `default_mode = "shadow"` or
+`default_mode = "suggest"` attaches new matching runs after they are admitted.
+Neither setting evaluates text or changes a topology by itself. The
+`review-owner-v1` profile captures only the exact reaction IDs
 enrolled in `review_owner_reactions` when they write a `review` port. Each
 source records its reaction invocation and diagram event sequence. The observer
 connects to the daemon-issued loopback diagram stream after run admission. A
@@ -50,12 +53,12 @@ truncating a finding.
 
 ## Decision policy and records
 
-Jev responses must resolve to `jev-1.13.0`, include the exact owner and
-`sufficient_context` questions, and include complete probability distributions.
-OMAR suggests a specific owner only when all three conditions are at least 0.90:
-the selected specific owner probability, the sufficient-context probability,
-and the response's explicit selection. `multiple`, `uncertain`, malformed, or
-lower-confidence responses become `needs_review`.
+Jev responses must resolve to `jev-1.13.0`, include the exact owner Choice and
+`sufficient_context` Noul questions, and include the complete owner probability
+distribution. OMAR keeps Choice confidence, selected-owner probability, and
+the Noul probability separate. It suggests a specific owner only when all three
+are at least 0.90. `multiple`, `uncertain`, malformed, or lower-confidence
+responses become `needs_review`.
 
 Every source and decision record has `schema_version: 1`. Decision records
 retain the source reaction, invocation, event sequence, port, profile and
@@ -93,4 +96,5 @@ opaque `next_cursor` value with `?cursor=...` to retrieve the next page.
 
 Mutating routes reject non-loopback browser origins. A client talking to an
 older daemon receives no Suggestions tab, preserving the existing product
-surface during upgrades.
+surface during upgrades. See [Jev decision profiles](jev-decision-profiles.md)
+for the scenario-coverage profile planned after review routing.

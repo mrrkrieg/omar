@@ -98,8 +98,9 @@ pub struct SlackBridgeConfig {
 pub struct DecisionSupportConfig {
     #[serde(default)]
     pub enabled: bool,
-    /// Runs remain off unless an operator explicitly changes the per-run
-    /// advisory mode. Kept in config so the effective default is visible.
+    /// The default applies only to newly admitted runs. `off` is inert;
+    /// `shadow` and `suggest` attach the advisory observer without changing a
+    /// topology run.
     #[serde(default = "default_decision_mode")]
     pub default_mode: String,
     /// Provider name is informational; the v1 service only implements the
@@ -109,8 +110,6 @@ pub struct DecisionSupportConfig {
     /// Jev is a wire contract, not a user-selectable model in this pilot.
     #[serde(default = "default_decision_model")]
     pub model: String,
-    #[serde(default = "default_typesafe_base_url")]
-    pub typesafe_base_url: String,
     #[serde(default = "default_decision_timeout")]
     pub timeout_seconds: u64,
     #[serde(default = "default_decision_timeout_ms")]
@@ -123,10 +122,6 @@ pub struct DecisionSupportConfig {
     /// profile. The service never infers eligibility from a reaction name.
     #[serde(default)]
     pub review_owner_reactions: Vec<String>,
-}
-
-fn default_typesafe_base_url() -> String {
-    "https://api.typesafe.ai".to_string()
 }
 
 fn default_decision_mode() -> String {
@@ -164,7 +159,6 @@ impl Default for DecisionSupportConfig {
             default_mode: default_decision_mode(),
             provider: default_decision_provider(),
             model: default_decision_model(),
-            typesafe_base_url: default_typesafe_base_url(),
             timeout_seconds: default_decision_timeout(),
             request_timeout_ms: default_decision_timeout_ms(),
             retention_days: default_decision_retention(),
