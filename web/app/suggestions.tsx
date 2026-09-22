@@ -91,7 +91,7 @@ export function Suggestions({ serveUrl, runId, capabilities }: Props) {
           {sources.map((item) => <option key={item.source_id} value={item.source_id}>{item.reaction_id} · {item.port}</option>)}
         </select>
       </label>
-      <textarea ref={excerpt} defaultValue={source?.text} key={source?.source_id} aria-label="Review excerpt" />
+      <textarea ref={excerpt} defaultValue={source?.text} key={source?.source_id} aria-label="Review excerpt" readOnly />
       <button type="button" onClick={() => void evaluate()}>Evaluate selection</button>
     </> : <p>Waiting for eligible review output.</p>}
     {message ? <p className="suggestions-message">{message}</p> : null}
