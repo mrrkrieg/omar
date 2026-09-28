@@ -14,9 +14,12 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use ts_rs::TS;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub mod workflow;
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum DecisionMode {
+    #[default]
     Off,
     Shadow,
     Suggest,
@@ -33,9 +36,10 @@ pub enum DecisionStatus {
     Cancelled,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum DecisionCoverage {
+    #[default]
     ContinuousSinceAttachment,
     Partial,
 }
@@ -181,6 +185,9 @@ pub struct FeedbackRequest {
 
 #[cfg(feature = "decision-support")]
 mod enabled {
+    #[cfg(test)]
+    mod evaluation;
+    mod workflow;
     use super::*;
     use crate::config::DecisionSupportConfig;
     use anyhow::{anyhow, Context, Result};
@@ -239,7 +246,7 @@ mod enabled {
     }
 
     trait Provider: Send + Sync {
-        fn evaluate(&self, selected: &str) -> Result<ProviderResponse>;
+        fn evaluate(&self, request: &Value) -> Result<ProviderResponse>;
     }
 
     fn provider_request(finding: &str) -> Value {
@@ -300,14 +307,14 @@ mod enabled {
     }
 
     impl Provider for TypeSafeProvider {
-        fn evaluate(&self, selected: &str) -> Result<ProviderResponse> {
+        fn evaluate(&self, request: &Value) -> Result<ProviderResponse> {
             let key = std::env::var("TYPESAFE_API_KEY")
                 .map_err(|_| anyhow!("TYPESAFE_API_KEY is not configured"))?;
             let mut response = self
                 .client
                 .post(&self.endpoint)
                 .bearer_auth(key)
-                .json(&provider_request(selected))
+                .json(request)
                 .send()
                 .context("call TypeSafe SystemOne")?
                 .error_for_status()
@@ -349,6 +356,7 @@ mod enabled {
 
     struct State {
         runs: BTreeMap<String, RunState>,
+        subjects: BTreeMap<String, workflow::SubjectState>,
         sender: Option<mpsc::SyncSender<Job>>,
         workers_started: bool,
     }
@@ -427,17 +435,6 @@ mod enabled {
         }
     }
 
-    impl Default for DecisionMode {
-        fn default() -> Self {
-            Self::Off
-        }
-    }
-    impl Default for DecisionCoverage {
-        fn default() -> Self {
-            Self::ContinuousSinceAttachment
-        }
-    }
-
     fn configured_default_mode(config: &DecisionSupportConfig) -> Result<DecisionMode> {
         match config.default_mode.as_str() {
             "off" => Ok(DecisionMode::Off),
@@ -447,7 +444,12 @@ mod enabled {
         }
     }
 
-    struct Job {
+    enum Job {
+        Run(RunJob),
+        Subject(workflow::SubjectJob),
+    }
+
+    struct RunJob {
         run_id: String,
         decision_id: String,
         generation: u64,
@@ -505,6 +507,7 @@ mod enabled {
                 provider,
                 state: Arc::new(Mutex::new(State {
                     runs: BTreeMap::new(),
+                    subjects: BTreeMap::new(),
                     sender: None,
                     workers_started: false,
                 })),
@@ -529,14 +532,17 @@ mod enabled {
                     DecisionMode::Shadow,
                     DecisionMode::Suggest,
                 ],
-                profiles: vec![PROFILE_ID.to_string()],
+                profiles: super::workflow::PROFILES
+                    .iter()
+                    .map(|id| (*id).into())
+                    .collect(),
                 max_requests_per_run: MAX_REQUESTS_PER_RUN,
                 max_source_bytes: MAX_SOURCE_BYTES as u32,
             }
         }
 
         pub fn set_mode(&self, run_id: &str, mode: DecisionMode) -> Result<()> {
-            if !self.config.enabled {
+            if !self.config.enabled && mode != DecisionMode::Off {
                 anyhow::bail!("decision support is disabled in config")
             }
             let _dispatch = self.dispatch_gate.begin_transition();
@@ -548,6 +554,11 @@ mod enabled {
                     .iter()
                     .filter(|(id, run)| id.as_str() != run_id && run.mode != DecisionMode::Off)
                     .count()
+                    + state
+                        .subjects
+                        .values()
+                        .filter(|s| workflow::enrolled(s))
+                        .count()
                     >= MAX_ENROLLED_RUNS
             {
                 anyhow::bail!("enrolled run limit reached")
@@ -671,7 +682,7 @@ mod enabled {
                     invocation_id: invocation_id.to_string(),
                     sequence,
                     port: port.to_string(),
-                    sha256: sha256(&text),
+                    sha256: sha256(text),
                     captured_at: now_unix(),
                     coverage: run.coverage,
                     text: text.to_string(),
@@ -842,6 +853,24 @@ mod enabled {
                 && self.run_is_within_retention(run_id)
         }
 
+        /// Legacy schema-v1 records have no owner. They may be adopted only
+        /// while this chat actually owns the live run; never by guessing an ID.
+        pub fn authorize_run(&self, chat_id: &str, run_id: &str, is_live_run: bool) -> bool {
+            if Uuid::parse_str(run_id).is_err() || !self.may_read_run(run_id, is_live_run) {
+                return false;
+            }
+            let path = self.root.join(run_id).join("scope-owner.json");
+            match fs::read(path) {
+                Ok(bytes) => {
+                    serde_json::from_slice::<String>(&bytes).is_ok_and(|owner| owner == chat_id)
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound && is_live_run => {
+                    self.persist(run_id, "scope", "owner", &chat_id).is_ok()
+                }
+                _ => false,
+            }
+        }
+
         /// A newly created live run has no private record until its first
         /// captured source. Once it does, retention applies even if the
         /// daemon stays up for longer than the configured window.
@@ -879,7 +908,7 @@ mod enabled {
             }
             let selected =
                 unicode_slice(&source.text, request.selection.start, request.selection.end)?;
-            if selected.as_bytes().len() > MAX_SELECTION_BYTES {
+            if selected.len() > MAX_SELECTION_BYTES {
                 anyhow::bail!("selection is too large")
             }
             if request.profile_id != "review-owner-v1" {
@@ -907,6 +936,7 @@ mod enabled {
             if run.requests.len() >= MAX_REQUESTS_PER_RUN as usize {
                 anyhow::bail!("request limit reached for this run")
             }
+            self.reserve_usage()?;
             let record = DecisionRecord {
                 schema_version: 1,
                 decision_id: Uuid::new_v4().to_string(),
@@ -959,12 +989,12 @@ mod enabled {
             let sender = state.sender.as_ref().expect("workers started").clone();
             drop(state);
             if sender
-                .try_send(Job {
+                .try_send(Job::Run(RunJob {
                     run_id: run_id.to_string(),
                     decision_id: record.decision_id.clone(),
                     generation,
                     selected,
-                })
+                }))
                 .is_err()
             {
                 let unavailable = {
@@ -996,9 +1026,31 @@ mod enabled {
             decision_id: &str,
             feedback: FeedbackRequest,
         ) -> Result<()> {
-            if feedback.request_id.trim().is_empty() {
-                anyhow::bail!("request_id is required")
-            }
+            anyhow::ensure!(
+                !feedback.request_id.is_empty()
+                    && feedback.request_id.len() <= 100
+                    && feedback
+                        .request_id
+                        .bytes()
+                        .all(|c| c.is_ascii_alphanumeric() || c == b'_' || c == b'-')
+                    && feedback.note.len() <= 2048,
+                "invalid feedback"
+            );
+            anyhow::ensure!(
+                feedback
+                    .corrected_owner
+                    .as_deref()
+                    .is_none_or(|owner| matches!(
+                        owner,
+                        "backend"
+                            | "frontend"
+                            | "contract"
+                            | "environment"
+                            | "multiple"
+                            | "uncertain"
+                    )),
+                "invalid corrected owner"
+            );
             let mut state = self.state.lock().expect("decision support poisoned");
             self.load_run_locked(&mut state, run_id)?;
             let run = state
@@ -1043,7 +1095,10 @@ mod enabled {
                         Ok(job) => job,
                         Err(_) => break,
                     };
-                    service.complete(job);
+                    match job {
+                        Job::Run(job) => service.complete(job),
+                        Job::Subject(job) => service.complete_subject(job),
+                    }
                 });
             }
             state.sender = Some(sender);
@@ -1062,7 +1117,7 @@ mod enabled {
             }
         }
 
-        fn complete(&self, job: Job) {
+        fn complete(&self, job: RunJob) {
             let _dispatch = self.dispatch_gate.begin_dispatch();
             let evaluating = {
                 let mut state = self.state.lock().expect("decision support poisoned");
@@ -1123,7 +1178,7 @@ mod enabled {
             }
             let result = self
                 .provider
-                .evaluate(&job.selected)
+                .evaluate(&provider_request(&job.selected))
                 .and_then(validate_response)
                 .map(policy);
             let record = {
@@ -1688,7 +1743,7 @@ mod enabled {
         }
 
         impl Provider for FakeProvider {
-            fn evaluate(&self, _selected: &str) -> Result<ProviderResponse> {
+            fn evaluate(&self, _request: &Value) -> Result<ProviderResponse> {
                 self.calls.fetch_add(1, Ordering::SeqCst);
                 Ok(valid_response())
             }
@@ -1701,7 +1756,7 @@ mod enabled {
         }
 
         impl Provider for BlockingProvider {
-            fn evaluate(&self, _selected: &str) -> Result<ProviderResponse> {
+            fn evaluate(&self, _request: &Value) -> Result<ProviderResponse> {
                 self.calls.fetch_add(1, Ordering::SeqCst);
                 let _ = self.started.send(());
                 let (locked, wake) = &*self.gate;

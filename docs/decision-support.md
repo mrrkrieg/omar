@@ -5,6 +5,9 @@ excerpt the current OMAR run has already produced. It is advisory: it cannot
 write workflow ports, send an agent message, approve a permission, start or
 stop a run, or report workflow verification.
 
+[Workflow assistance](jev-workflow-assistance.md) adds versioned template,
+pre-run scenario and saved-text requirement reviews, all default-off.
+
 ## Enable it deliberately
 
 Build OMAR with the optional feature and enable the local API in the daemon
@@ -97,4 +100,5 @@ opaque `next_cursor` value with `?cursor=...` to retrieve the next page.
 Mutating routes reject non-loopback browser origins. A client talking to an
 older daemon receives no Suggestions tab, preserving the existing product
 surface during upgrades. See [Jev decision profiles](jev-decision-profiles.md)
-for the scenario-coverage profile planned after review routing.
+for background and [workflow assistance](jev-workflow-assistance.md) for the
+implemented scenario, template and artifact profiles and their current limits.

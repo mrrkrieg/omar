@@ -21,6 +21,9 @@ use serde_json::{json, Value};
 use ts_rs::TS;
 use uuid::Uuid;
 
+#[cfg(feature = "decision-support")]
+mod assistance;
+
 use crate::chat_history::{ConversationSummary, History};
 use crate::config::Config;
 #[cfg(feature = "decision-support")]
@@ -982,6 +985,44 @@ fn handle_client(mut stream: TcpStream, workspaces: Arc<Workspaces>) -> Result<(
         #[cfg(not(feature = "decision-support"))]
         ("GET", "/v1/assist/capabilities") => (204, json!({})),
         #[cfg(feature = "decision-support")]
+        ("GET", "/v1/assist/templates") => assistance::catalog(),
+        #[cfg(feature = "decision-support")]
+        ("GET", "/v1/assist/artifact-snapshots") => assistance::snapshots(&context),
+        #[cfg(feature = "decision-support")]
+        ("POST", "/v1/assist/artifact-preview") => {
+            if origin_header
+                .as_deref()
+                .is_some_and(|value| crate::diagram::allowed_origin(Some(value)).is_none())
+            {
+                (403, json!({"error": "forbidden origin"}))
+            } else {
+                assistance::artifact_preview(&context, &read_body(content_length)?)
+            }
+        }
+        #[cfg(feature = "decision-support")]
+        ("POST", "/v1/assist/subjects") => {
+            if origin_header
+                .as_deref()
+                .is_some_and(|value| crate::diagram::allowed_origin(Some(value)).is_none())
+            {
+                (403, json!({"error": "forbidden origin"}))
+            } else {
+                assistance::register(&context, &read_body(content_length)?)
+            }
+        }
+        #[cfg(feature = "decision-support")]
+        ("GET" | "POST", rest) if rest.starts_with("/v1/assist/subjects/") => {
+            if method == "POST"
+                && origin_header
+                    .as_deref()
+                    .is_some_and(|value| crate::diagram::allowed_origin(Some(value)).is_none())
+            {
+                (403, json!({"error": "forbidden origin"}))
+            } else {
+                assistance::subject(&context, &method, rest, &read_body(content_length)?)
+            }
+        }
+        #[cfg(feature = "decision-support")]
         ("POST", rest) if rest.starts_with("/v1/assist/runs/") && rest.ends_with("/mode") => {
             if origin_header
                 .as_deref()
@@ -1907,6 +1948,12 @@ fn assist_set_mode(context: &Arc<Context_>, route: &str, body: &[u8]) -> (u16, V
             None => return (404, json!({"error": "unknown run"})),
         }
     };
+    if !context
+        .decisions
+        .authorize_run(&context.conversation_id, run_id, true)
+    {
+        return (404, json!({"error": "unknown run"}));
+    }
     if let Err(error) =
         context
             .decisions
@@ -1937,7 +1984,10 @@ fn assist_sources(context: &Arc<Context_>, route: &str, query: Option<&str>) -> 
         .lock()
         .expect("serve runs poisoned")
         .contains_key(run_id);
-    if !context.decisions.may_read_run(run_id, is_live_run) {
+    if !context
+        .decisions
+        .authorize_run(&context.conversation_id, run_id, is_live_run)
+    {
         return (404, json!({"error": "unknown run"}));
     }
     let cursor = match assist_cursor(query) {
@@ -1963,7 +2013,10 @@ fn assist_decisions(context: &Arc<Context_>, route: &str, query: Option<&str>) -
         .lock()
         .expect("serve runs poisoned")
         .contains_key(run_id);
-    if !context.decisions.may_read_run(run_id, is_live_run) {
+    if !context
+        .decisions
+        .authorize_run(&context.conversation_id, run_id, is_live_run)
+    {
         return (404, json!({"error": "unknown run"}));
     }
     let cursor = match assist_cursor(query) {
@@ -2030,6 +2083,17 @@ fn assist_feedback(context: &Arc<Context_>, route: &str, body: &[u8]) -> (u16, V
     let Some((run_id, decision_id)) = rest.split_once("/decisions/") else {
         return (404, json!({"error": "not found"}));
     };
+    let live = context
+        .runs
+        .lock()
+        .expect("serve runs poisoned")
+        .contains_key(run_id);
+    if !context
+        .decisions
+        .authorize_run(&context.conversation_id, run_id, live)
+    {
+        return (404, json!({"error": "unknown run"}));
+    }
     let request: FeedbackRequest = match serde_json::from_slice(body) {
         Ok(value) => value,
         Err(error) => return (400, json!({"error": format!("invalid request: {error}")})),
@@ -2052,6 +2116,7 @@ fn assist_error(error: String) -> (u16, Value) {
     } else if error.contains("too large") {
         413
     } else if error.contains("unknown source")
+        || error.contains("unknown subject")
         || error.contains("unknown decision")
         || error.contains("unknown run")
     {
@@ -2178,9 +2243,14 @@ fn start_run(context: &Arc<Context_>, body: &[u8]) -> (u16, Value) {
             };
             if let Some(record) = record {
                 #[cfg(feature = "decision-support")]
-                context
+                if context
                     .decisions
-                    .enable_default_for_run(run_id.clone(), diagram_address);
+                    .authorize_run(&context.conversation_id, &run_id, true)
+                {
+                    context
+                        .decisions
+                        .enable_default_for_run(run_id.clone(), diagram_address);
+                }
                 return (201, json!(record));
             }
             (500, json!({"error": "run vanished"}))

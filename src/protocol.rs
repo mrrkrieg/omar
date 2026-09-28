@@ -23,6 +23,7 @@
 //! runtime one — a hand-written list inside `assertRunRecord`. The array is
 //! what that check can be written against.
 
+use crate::decisions::workflow::*;
 use ts_rs::{Config, TS};
 
 use crate::chat_history::{Conversation, ConversationSummary};
@@ -225,6 +226,16 @@ pub fn generate() -> String {
         DecisionSource::decl(&config),
         DecisionSelection::decl(&config),
         DecisionRecord::decl(&config),
+        SubjectKind::decl(&config),
+        AdviceSubject::decl(&config),
+        AdviceEvidence::decl(&config),
+        AdviceCriterion::decl(&config),
+        ResponsibilityMap::decl(&config),
+        AdviceInput::decl(&config),
+        AdviceResult::decl(&config),
+        AdviceRecord::decl(&config),
+        AdviceState::decl(&config),
+        WorkflowTemplate::decl(&config),
     ];
     for decl in &mut decls {
         out.push_str("export ");

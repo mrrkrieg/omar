@@ -13,6 +13,7 @@ import { PortPanel } from "./port-panel";
 import { Resizer } from "./resizer";
 import { Waiting } from "./waiting";
 import { Suggestions } from "./suggestions";
+import { WorkflowAdvice } from "./workflow-advice";
 import { fetchDecisionCapabilities } from "./lib/decision-client";
 import {
   eaDesignAgent,
@@ -934,6 +935,9 @@ function StudioWorkspace({ serveUrl = "", historyUrl, designAgent, selectedId, o
             {phase === "spawning" ? <Waiting label="Starting the run" /> : null}
           </div>
 
+          {decisionCapabilities?.enabled && decisionCapabilities.profiles.includes("scenario-coverage-v1") && !isDemo ? <WorkflowAdvice serveUrl={serveUrl} program={source} inputs={design?.inputs ?? {}} canSelect={phase !== "spawning" && phase !== "observing"} onSelect={(chosen) => {
+            setDesign(chosen); setSource(chosen.program); setFilename(`${chosen.preview.team}.omar`); setSnapshot(chosen.preview); setPhase("review");
+          }} /> : null}
           {error ? <div className="connection-error">{error}</div> : null}
           {daemon.state === "offline" ? <div className="connection-error" role="status">Cannot reach the runtime at {historyUrl}.</div> : null}
 

@@ -11,7 +11,7 @@ write, agent message, approval, or run-state change.
    responsibility map, recommend the owner or return `needs_review`. This is
    the safest first profile because operators already perform the task, the
    result is easy to correct, and the output is copied rather than delivered.
-2. **Scenario coverage — next.** At proposal review, evaluate a named,
+2. **Scenario coverage — implemented behind opt-in.** At proposal review, evaluate a named,
    template-supplied scenario against the proposed program, declared inputs,
    and compiler diagnostics. The choices are `covered`, `ambiguous`,
    `missing_contract`, `missing_handoff`, and `insufficient_evidence`. A Noul
@@ -26,10 +26,14 @@ write, agent message, approval, or run-state change.
 
 ## Scenario-coverage profile
 
-Scenario design is the highest-value next use after review routing. It helps
+Scenario design is the first workflow-assistance slice after review routing. It helps
 an operator find semantic gaps before a workflow starts, where a correction is
 cheap, while preserving the existing compiler and approval flow as the only
 sources of authority.
+
+See [workflow assistance](jev-workflow-assistance.md) for the implemented v1
+scenario, template-fit and artifact-requirement profiles, scope limits and
+provisional evaluation status. Runtime intervention remains future work.
 
 Each prepared template should opt in with a versioned scenario catalog. A
 scenario contains a stable ID, plain-language target, required inputs, expected

@@ -169,3 +169,31 @@ selection: DecisionSelection, run_id: string, source_id: string, source_sha256: 
  * persisted card remains explainable without a live topology.
  */
 reaction_id: string, invocation_id: string, event_sequence: number, port: string, profile_id: string, profile_sha256: string, policy_version: string, mode: DecisionMode, status: DecisionStatus, coverage: DecisionCoverage, freshness: string, reason_code: string, suggestion: string, owner: string | null, probabilities: { [key in string]: number } | null, sufficient_context: number | null, confidence: number | null, selected_probability: number, owner_probabilities: { [key in string]: number }, context_probabilities: { [key in string]: number }, model: string | null, model_requested: string, model_resolved: string | null, created_at: number, created_at_ms: number, completed_at: number | null, completed_at_ms: number | null, latency_ms: number | null, input_tokens: number | null, error: string | null, };
+
+export type SubjectKind = "draft" | "proposal" | "run" | "artifact";
+
+export type AdviceSubject = { id: string, kind: SubjectKind, chat_id: string, workspace_id: string, revision: string, sha256: string, };
+
+export type AdviceEvidence = { id: string, text: string,
+/**
+ * Unicode scalar offsets in the immutable text revision.
+ */
+start: number, end: number, };
+
+export type AdviceCriterion = { id: string, version: string, text: string, requires_complete: boolean, };
+
+export type ResponsibilityMap = { version: string, roles: { [key in string]: string }, };
+
+export type AdviceInput = { subject: AdviceSubject, profile_id: string, criterion: AdviceCriterion, evidence: Array<AdviceEvidence>, complete: boolean,
+/**
+ * Server-computed failures are authoritative; a provider cannot override them.
+ */
+deterministic_failures: Array<string>, eligible_templates: Array<string>, responsibility_map: ResponsibilityMap | null, };
+
+export type AdviceResult = { outcome: string, message: string, confidence: number, selected_probability: number, sufficient_context: number, probabilities: { [key in string]: number }, evidence_id: string | null, model: string, input_tokens: number | null, };
+
+export type AdviceRecord = { schema_version: number, decision_id: string, request_id: string, fingerprint: string, input: AdviceInput, profile_sha256: string, policy_version: string, mode: DecisionMode, status: DecisionStatus, freshness: string, result: AdviceResult | null, error: string | null, created_at_ms: number, latency_ms: number | null, };
+
+export type AdviceState = { subject: AdviceSubject, input: AdviceInput, mode: DecisionMode, records: Array<AdviceRecord>, };
+
+export type WorkflowTemplate = { id: string, version: string, name: string, purpose: string, required_inputs: Array<string>, output_type: string, backend: string, eligible: boolean, constraint: string, program: string, scenarios: Array<AdviceCriterion>, };
