@@ -2239,7 +2239,7 @@ fn spawn_run_thread(
         // The topology directory belongs to a team and is replaced on a
         // rerun. Preserve this run's result before reporting it completed.
         let outcome = outcome.and_then(|end| {
-            let source = deploy::outputs_path(&deploy::dir_for(
+            let source = crate::deploy::outputs_path(&crate::deploy::dir_for(
                 &context.omar_dir,
                 context.ea_id,
                 &team,
