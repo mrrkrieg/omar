@@ -162,6 +162,7 @@ test("template selection prepares a runnable design and exposes its result", asy
   await expect(library.getByLabel("Local paths or source material")).toHaveCount(0);
   const description = library.getByLabel("Describe work");
   const prepare = library.getByRole("button", { name: "Prepare Workflow", exact: true });
+  await expect(prepare).toBeInViewport();
   await expect(prepare).toBeDisabled();
   await expect(library.locator("#template-work-count")).toContainText("Minimum 50 characters · 0/50");
   await description.fill("x".repeat(49));

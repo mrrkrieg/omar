@@ -2241,10 +2241,14 @@ h2 {
 .template-library-list { border-right: 1px solid var(--line); }
 .template-search, .template-form label { display: grid; gap: 7px; color: var(--muted); font-size: 13px; }
 .template-work-help { max-width: 62ch; line-height: 1.5; }
-.template-work-count { margin: -10px 0 0; color: var(--muted); font-size: 12px; }
+.template-work-count { margin: 0; color: var(--muted); font-size: 12px; }
+.template-prepare-bar { position: sticky; bottom: 0; z-index: 2; display: flex; align-items: end; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding: 12px 0; border-top: 1px solid var(--line); background: var(--panel); }
+.template-prepare-bar label { min-width: 140px; width: min(200px, 35%); }
+.template-prepare-action { display: grid; justify-items: end; gap: 6px; margin-left: auto; }
+.template-prepare-action button { white-space: nowrap; }
 .template-search input, .template-form textarea, .template-form input[type=file], .template-form select { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--ink); color: var(--text); font: inherit; }
 .template-form textarea { min-height: 94px; resize: vertical; }
-.template-form textarea[aria-describedby="template-work-count"] { min-height: 170px; }
+.template-form textarea[aria-describedby="template-work-count"] { min-height: 130px; }
 .template-groups { display: flex; gap: 6px; flex-wrap: wrap; margin: 14px 0; }
 .template-groups button { padding: 6px 9px; border: 1px solid var(--line); border-radius: 100px; background: var(--panel-2); color: var(--muted); cursor: pointer; font-size: 12px; }
 .template-groups button[aria-pressed=true] { border-color: var(--purple); color: var(--text); background: var(--purple-soft); }

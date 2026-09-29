@@ -132,10 +132,14 @@ export function TemplateLibrary({ serveUrl, live, onClose, onUse }: {
                 <span className="template-work-help">Give us more context about what you are trying to achieve. Include relevant files or source material, constraints, the result you want, and how you will judge success.</span>
                 <textarea value={description} onChange={(event) => setDescription(event.target.value)} placeholder={`For example: ${selected.input} Add the relevant paths, constraints, and expected result.`} aria-describedby="template-work-count" />
               </label>
-              <p id="template-work-count" className="template-work-count" role="status">{enoughDetail ? `50-character minimum met · ${descriptionLength} entered` : `Minimum 50 characters · ${descriptionLength}/50`}</p>
-              <label>Agent backend<select value={backend} onChange={(event) => setBackend(event.target.value)}>{backends.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>
+              <div className="template-prepare-bar">
+                <label>Agent backend<select value={backend} onChange={(event) => setBackend(event.target.value)}>{backends.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>
+                <div className="template-prepare-action">
+                  <p id="template-work-count" className="template-work-count" role="status">{enoughDetail ? `50-character minimum met · ${descriptionLength} entered` : `Minimum 50 characters · ${descriptionLength}/50`}</p>
+                  <button type="button" className="primary-button" disabled={!live || working || !enoughDetail} onClick={() => void prepareSelected()}>{working ? "Checking workflow…" : enoughDetail ? "Prepare Workflow Live" : "Prepare Workflow"}</button>
+                </div>
+              </div>
               <p>Preparing creates a separate chat for this workflow. Agents can inspect the configured local workspace, but nothing runs until you confirm deployment. Check their draft and evidence before acting on it.</p>
-              <button type="button" className="primary-button" disabled={!live || working || !enoughDetail} onClick={() => void prepareSelected()}>{working ? "Checking workflow…" : enoughDetail ? "Prepare Workflow Live" : "Prepare Workflow"}</button>
               {!live ? <p role="status">Connect to a live OMAR runtime to prepare this workflow.</p> : null}
             </div>
           )}
