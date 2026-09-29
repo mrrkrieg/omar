@@ -1508,13 +1508,20 @@ fn prepare_template_chat(workspaces: &Arc<Workspaces>, body: &[u8]) -> (u16, Val
         Ok(request) => request,
         Err(error) => return (400, json!({"error": format!("invalid request: {error}")})),
     };
-    let title = request.title.split_whitespace().collect::<Vec<_>>().join(" ");
+    let title = request
+        .title
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
     if title.is_empty() || title.chars().count() > 80 {
         return (400, json!({"error": "title must be 1–80 characters"}));
     }
     let description = request.description.trim();
     if description.chars().count() < 50 {
-        return (400, json!({"error": "describe the work in at least 50 characters"}));
+        return (
+            400,
+            json!({"error": "describe the work in at least 50 characters"}),
+        );
     }
     let staged = match stage_program(&request.program, Some("template.omar")) {
         Ok(staged) => staged,
@@ -2746,7 +2753,12 @@ mod tests {
             "program": include_str!("../web/tests/fixtures/review-flow.omar"),
         })
         .to_string();
-        let response = request(server.address(), "POST", "/v1/chats/templates", Some(&payload));
+        let response = request(
+            server.address(),
+            "POST",
+            "/v1/chats/templates",
+            Some(&payload),
+        );
         assert!(response.contains(" 400 "), "{response}");
         let saved = server.workspaces.history.lock().unwrap();
         assert_eq!(saved.active_id, previous);

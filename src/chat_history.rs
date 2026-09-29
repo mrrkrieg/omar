@@ -168,7 +168,10 @@ impl History {
     /// when no agent has been launched yet.
     pub fn create_named(&mut self, title: &str, messages: Vec<ChatMessage>) -> Result<String> {
         let title = title.split_whitespace().collect::<Vec<_>>().join(" ");
-        anyhow::ensure!(!title.is_empty() && title.chars().count() <= 80, "invalid chat title");
+        anyhow::ensure!(
+            !title.is_empty() && title.chars().count() <= 80,
+            "invalid chat title"
+        );
         let mut next = self.clone();
         let mut chat = Conversation::new();
         chat.title = title;
@@ -332,7 +335,10 @@ mod tests {
         let id = history
             .create_named(
                 "Generate documentation",
-                vec![message("Describe the documentation work"), message("Prepared proposal")],
+                vec![
+                    message("Describe the documentation work"),
+                    message("Prepared proposal"),
+                ],
             )
             .unwrap();
         assert_ne!(id, previous);
