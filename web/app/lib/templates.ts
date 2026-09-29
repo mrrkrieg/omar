@@ -132,13 +132,23 @@ function omarString(value: string): string {
   return JSON.stringify(value);
 }
 
+export function templateTeam(template: Template): string {
+  // Team names are OMAR identifiers, while chat titles remain human-readable.
+  if (template.id === "docs") return "Documentation";
+  return template.title
+    .split(/[^A-Za-z0-9]+/)
+    .filter(Boolean)
+    .map((word) => word[0].toUpperCase() + word.slice(1))
+    .join("");
+}
+
 export function templateProgram(template: Template, backend = "codex"): string {
   const steps = instructions[template.id];
   if (!steps) throw new Error(`Template ${template.id} is not an agent workflow.`);
   if (!/^(agy|claude|codex|cursor|opencode|pi)$/i.test(backend)) {
     throw new Error("Choose a supported agent backend.");
   }
-  const team = `Template${template.number}`;
+  const team = templateTeam(template);
   const first = `Work only on the local workspace and request. Scope: ${template.scope} ${steps.work} Request: $(request) Set draft to your work and evidence references.`;
   const second = `${steps.review} Inspect the actual local work and draft: $(draft) Set review to a concise critique that includes the original draft or its artifact paths.`;
   const third = `${steps.finish} Resolve the critique using actual workspace evidence: $(review) Set result to the final user-facing report. Distinguish observed facts from suggestions.`;

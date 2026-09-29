@@ -12,10 +12,9 @@ const groups = [
   { id: "operations", label: "Operations & analysis" },
 ];
 
-export function TemplateLibrary({ serveUrl, live, busy, onClose, onUse }: {
+export function TemplateLibrary({ serveUrl, live, onClose, onUse }: {
   serveUrl: string;
   live: boolean;
-  busy: boolean;
   onClose: () => void;
   onUse: (template: Template, request: string, backend: string) => Promise<void>;
 }) {
@@ -23,8 +22,7 @@ export function TemplateLibrary({ serveUrl, live, busy, onClose, onUse }: {
   const [group, setGroup] = useState("all");
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<Template>(templates[0]);
-  const [request, setRequest] = useState(templates[0].input);
-  const [materials, setMaterials] = useState("");
+  const [description, setDescription] = useState("");
   const [screening, setScreening] = useState("");
   const [findings, setFindings] = useState<SecretFinding[]>([]);
   const [scanned, setScanned] = useState(false);
@@ -32,6 +30,8 @@ export function TemplateLibrary({ serveUrl, live, busy, onClose, onUse }: {
   const [error, setError] = useState("");
   const [backends, setBackends] = useState(["codex"]);
   const [backend, setBackend] = useState("codex");
+  const descriptionLength = Array.from(description.trim()).length;
+  const enoughDetail = descriptionLength >= 50;
 
   useEffect(() => {
     const node = dialog.current;
@@ -59,8 +59,7 @@ export function TemplateLibrary({ serveUrl, live, busy, onClose, onUse }: {
 
   function select(template: Template) {
     setSelected(template);
-    setRequest(template.input);
-    setMaterials("");
+    setDescription("");
     setScreening("");
     setFindings([]);
     setScanned(false);
@@ -72,8 +71,7 @@ export function TemplateLibrary({ serveUrl, live, busy, onClose, onUse }: {
     setWorking(true);
     setError("");
     try {
-      const combined = `${selected.field}: ${request.trim()}\n\nLocal source paths or supplied material:\n${materials.trim() || "Use the configured local workspace; no additional material supplied."}`;
-      await onUse(selected, combined, backend);
+      await onUse(selected, description.trim(), backend);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -130,13 +128,15 @@ export function TemplateLibrary({ serveUrl, live, busy, onClose, onUse }: {
             </div>
           ) : (
             <div className="template-form">
-              <label>{selected.field}<textarea value={request} onChange={(event) => setRequest(event.target.value)} /></label>
-              <label>Local paths or source material<textarea value={materials} onChange={(event) => setMaterials(event.target.value)} placeholder="Give paths in the configured workspace, or paste the source material and rules needed for this job." /></label>
+              <label>Describe work
+                <span className="template-work-help">Give us more context about what you are trying to achieve. Include relevant files or source material, constraints, the result you want, and how you will judge success.</span>
+                <textarea value={description} onChange={(event) => setDescription(event.target.value)} placeholder={`For example: ${selected.input} Add the relevant paths, constraints, and expected result.`} aria-describedby="template-work-count" />
+              </label>
+              <p id="template-work-count" className="template-work-count" role="status">{enoughDetail ? `50-character minimum met · ${descriptionLength} entered` : `Minimum 50 characters · ${descriptionLength}/50`}</p>
               <label>Agent backend<select value={backend} onChange={(event) => setBackend(event.target.value)}>{backends.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>
-              <p>Agents can inspect the runtime’s configured local workspace. Pasted material is sent to your configured agent backend only after you confirm deployment. The workflow produces a draft and evidence references; check results and calculations yourself before acting on them.</p>
-              <button type="button" className="primary-button" disabled={!live || busy || working || !request.trim()} onClick={() => void prepareSelected()}>{working ? "Checking workflow…" : "Prepare workflow"}</button>
+              <p>Preparing creates a separate chat for this workflow. Agents can inspect the configured local workspace, but nothing runs until you confirm deployment. Check their draft and evidence before acting on it.</p>
+              <button type="button" className="primary-button" disabled={!live || working || !enoughDetail} onClick={() => void prepareSelected()}>{working ? "Checking workflow…" : enoughDetail ? "Prepare Workflow Live" : "Prepare Workflow"}</button>
               {!live ? <p role="status">Connect to a live OMAR runtime to prepare this workflow.</p> : null}
-              {busy ? <p role="status">Finish or stop the current run before preparing another workflow.</p> : null}
             </div>
           )}
           <details className="template-example"><summary>See a precomputed example</summary><pre>{selected.example.summary}</pre><pre>{selected.example.evidence}</pre></details>

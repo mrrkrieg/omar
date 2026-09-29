@@ -419,3 +419,18 @@ export async function selectConversation(serveUrl: string, id?: string): Promise
   if (!response.ok) throw new Error(await readError(response));
   return response.json();
 }
+
+/** Create a named chat containing the operator's request and a checked template proposal. */
+export async function prepareTemplateConversation(serveUrl: string, request: {
+  title: string;
+  description: string;
+  program: string;
+}): Promise<ConversationSummary> {
+  const response = await fetch(`${normalizeRuntimeUrl(serveUrl)}/v1/chats/templates`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(request),
+  });
+  if (!response.ok) throw new Error(await readError(response));
+  return response.json();
+}

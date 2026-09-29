@@ -29,7 +29,7 @@ import test, { after, before, describe } from "node:test";
 import WebSocket from "ws";
 
 import { startFakeServe } from "./fake-serve.mjs";
-import { templateProgram, templates } from "../app/lib/templates.ts";
+import { templateProgram, templateTeam, templates } from "../app/lib/templates.ts";
 
 // The runtime is a sibling directory now, not a sibling checkout: these are
 // built from the same commit as the client they are checked against.
@@ -217,14 +217,47 @@ describe("wire conformance between the fake and the real daemon", { skip: WIRE_S
     for (const template of templates) {
       if (template.id === "secrets") continue;
       const response = await fetch(`${real.url}/v1/programs/check`, post({
-        filename: `Template${template.number}.omar`,
+        filename: `${templateTeam(template)}.omar`,
         program: templateProgram(template),
       }));
       const result = await response.json();
       assert.equal(response.status, 200, `${template.id}: ${JSON.stringify(result)}`);
       assert.equal(result.ok, true, `${template.id}: ${JSON.stringify(result.errors)}`);
-      assert.equal(result.preview?.team, `Template${template.number}`, template.id);
+      assert.equal(result.preview?.team, templateTeam(template), template.id);
     }
+  });
+
+  test("preparing a template creates a separate, named chat with a durable proposal", async () => {
+    const template = templates.find((item) => item.id === "docs");
+    const description = "Update README examples using current source and tests, check local links, and report each changed file with the verification performed.";
+    const payload = { title: template.title, description, program: templateProgram(template) };
+    const { real: r, fake: f } = await both("/v1/chats/templates", post(payload));
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    assert.equal(f.status, r.status);
+    assert.equal(r.body.title, "Generate documentation");
+    assert.equal(f.body.title, r.body.title);
+    assert.equal(r.body.message_count, 2);
+    assert.equal(f.body.message_count, 2);
+    const { real: realChat, fake: fakeChat } = await both("/v1/chat");
+    for (const [chat, expectedId] of [[realChat.body, r.body.id], [fakeChat.body, f.body.id]]) {
+      assert.equal(chat.id, expectedId);
+      assert.equal(chat.messages[0].text, description);
+      assert.equal(chat.messages[1].design.preview.team, "Documentation");
+      assert.equal(chat.messages[1].design.inputs["flow.request"], description);
+    }
+    const short = { ...payload, description: "Too brief" };
+    const invalid = await both("/v1/chats/templates", post(short));
+    assert.equal(invalid.real.status, 400);
+    assert.equal(invalid.fake.status, 400);
+    const current = await both("/v1/chat");
+    assert.equal(current.real.body.id, r.body.id);
+    assert.equal(current.fake.body.id, f.body.id);
+    const badProgram = await both("/v1/chats/templates", post({ ...payload, program: "!!invalid!!" }));
+    assert.equal(badProgram.real.status, 400);
+    assert.equal(badProgram.fake.status, 400);
+    const afterBadProgram = await both("/v1/chat");
+    assert.equal(afterBadProgram.real.body.id, r.body.id);
+    assert.equal(afterBadProgram.fake.body.id, f.body.id);
   });
 
   test("an unknown run is a 404 with an error field", async () => {

@@ -221,6 +221,13 @@ struct ChatRequest {
     selection: Vec<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct PrepareTemplateChatRequest {
+    title: String,
+    description: String,
+    program: String,
+}
+
 struct Chat {
     latest_run: Option<String>,
     subscribers: Vec<mpsc::SyncSender<ChatMessage>>,
@@ -925,6 +932,9 @@ fn handle_client(mut stream: TcpStream, workspaces: Arc<Workspaces>) -> Result<(
             let _ = read_body(content_length)?;
             select_chat(&workspaces, None)
         }
+        ("POST", "/v1/chats/templates") => {
+            prepare_template_chat(&workspaces, &read_body(content_length)?)
+        }
         ("POST", rest) if rest.starts_with("/v1/chats/") && rest.ends_with("/activate") => {
             let _ = read_body(content_length)?;
             let id = rest
@@ -1489,6 +1499,85 @@ fn select_chat(workspaces: &Arc<Workspaces>, id: Option<&str>) -> (u16, Value) {
         .summary();
     context.live_summary(&mut summary);
     (200, json!(summary))
+}
+
+/// A template gets its own durable chat before it appears in review. Compile
+/// first so a bad program cannot leave an empty chat in the navigation.
+fn prepare_template_chat(workspaces: &Arc<Workspaces>, body: &[u8]) -> (u16, Value) {
+    let request: PrepareTemplateChatRequest = match serde_json::from_slice(body) {
+        Ok(request) => request,
+        Err(error) => return (400, json!({"error": format!("invalid request: {error}")})),
+    };
+    let title = request.title.split_whitespace().collect::<Vec<_>>().join(" ");
+    if title.is_empty() || title.chars().count() > 80 {
+        return (400, json!({"error": "title must be 1–80 characters"}));
+    }
+    let description = request.description.trim();
+    if description.chars().count() < 50 {
+        return (400, json!({"error": "describe the work in at least 50 characters"}));
+    }
+    let staged = match stage_program(&request.program, Some("template.omar")) {
+        Ok(staged) => staged,
+        Err((_, body)) => {
+            return (
+                400,
+                json!({"error": body["errors"][0].as_str().unwrap_or("invalid program")}),
+            )
+        }
+    };
+    let outcome =
+        topology::load_program(&staged.path).and_then(|bytecode| topology::verify(&bytecode));
+    let state = match staged.finish(outcome) {
+        Ok(state) => state,
+        Err(error) => return (400, json!({"error": error})),
+    };
+    let messages = vec![
+        ChatMessage {
+            sequence: 0,
+            role: ChatRole::Operator,
+            text: description.to_string(),
+            progress: false,
+            design: None,
+            selection: Vec::new(),
+        },
+        ChatMessage {
+            sequence: 0,
+            role: ChatRole::Assistant,
+            text: format!("Prepared {title}. Review the workflow before deploying."),
+            progress: false,
+            design: Some(ProposedDesign {
+                program: request.program,
+                inputs: BTreeMap::from([(
+                    "flow.request".to_string(),
+                    Value::String(description.to_string()),
+                )]),
+                preview: crate::diagram::DiagramSnapshot::from_vm_state(&state),
+            }),
+            selection: Vec::new(),
+        },
+    ];
+    let _selection = workspaces.selection.lock().expect("selection poisoned");
+    let selected = match workspaces
+        .history
+        .lock()
+        .expect("history poisoned")
+        .create_named(&title, messages)
+    {
+        Ok(id) => id,
+        Err(error) => return (500, json!({"error": error.to_string()})),
+    };
+    let context = match workspaces.get(&selected) {
+        Ok(context) => context,
+        Err(error) => return (500, json!({"error": error.to_string()})),
+    };
+    let mut summary = workspaces
+        .history
+        .lock()
+        .expect("history poisoned")
+        .conversation(&selected)
+        .summary();
+    context.live_summary(&mut summary);
+    (201, json!(summary))
 }
 
 fn send_to_ea(context: &Arc<Context_>, body: &[u8]) -> (u16, Value) {
@@ -2645,6 +2734,23 @@ mod tests {
             !request(server.address(), "GET", "/v1/chat", None).contains("This belongs elsewhere")
         );
         assert_eq!(server.context.runs.lock().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn invalid_template_description_does_not_create_a_chat() {
+        let server = test_server();
+        let previous = server.workspaces.history.lock().unwrap().active_id.clone();
+        let payload = json!({
+            "title": "Generate documentation",
+            "description": "Too brief",
+            "program": include_str!("../web/tests/fixtures/review-flow.omar"),
+        })
+        .to_string();
+        let response = request(server.address(), "POST", "/v1/chats/templates", Some(&payload));
+        assert!(response.contains(" 400 "), "{response}");
+        let saved = server.workspaces.history.lock().unwrap();
+        assert_eq!(saved.active_id, previous);
+        assert_eq!(saved.conversations.len(), 1);
     }
 
     #[test]

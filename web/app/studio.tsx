@@ -14,7 +14,7 @@ import { Resizer } from "./resizer";
 import { Waiting } from "./waiting";
 import { TemplateLibrary } from "./template-library";
 import { RunResult } from "./run-result";
-import { templateInputs, templateProgram, type Template } from "./lib/templates";
+import { templateProgram, type Template } from "./lib/templates";
 import {
   eaDesignAgent,
   scriptedDesignAgent,
@@ -48,6 +48,7 @@ import {
   stopRun,
   subscribeToDiagram,
   fetchConversations,
+  prepareTemplateConversation,
 } from "./lib/runtime-client";
 
 /**
@@ -687,35 +688,16 @@ function StudioWorkspace({ serveUrl = "", historyUrl, designAgent, selectedId, o
   }
 
   async function prepareTemplate(template: Template, request: string, backend: string) {
-    if (daemon.state !== "live" || (run && !isRunFinished(run.status))) {
-      throw new Error("A live, idle runtime is needed to prepare a template.");
+    if (daemon.state !== "live") {
+      throw new Error("A live runtime is needed to prepare a template.");
     }
-    const program = templateProgram(template, backend);
-    const filename = `Template${template.number}.omar`;
-    const check = await checkProgram(serveUrl, program, filename);
-    if (!check.ok || !check.preview) {
-      throw new Error(check.errors?.join("\n") || "The runtime could not preview this template.");
-    }
-    const proposal = { program, inputs: templateInputs(request), preview: check.preview };
-    setDesign(proposal);
-    setSource(program);
-    setFilename(filename);
-    setSourceErrors([]);
-    setSnapshot(check.preview);
-    setSteps(check.steps ?? []);
-    setRun(null);
-    setTab("source");
-    setPhase("review");
-    setConfirming(false);
-    setResultOpen(false);
-    setError("");
-    if (!arrangedRef.current) {
-      arrangedRef.current = true;
-      const available = workspaceRef.current?.clientWidth ?? 0;
-      if (available) setBuilderWidth(Math.round(available / 2));
-      setInspectorWidth(0);
-    }
+    const conversation = await prepareTemplateConversation(historyUrl, {
+      title: template.title,
+      description: request,
+      program: templateProgram(template, backend),
+    });
     setTemplateLibraryOpen(false);
+    onSelect(conversation);
   }
 
   /**
@@ -1226,7 +1208,7 @@ function StudioWorkspace({ serveUrl = "", historyUrl, designAgent, selectedId, o
         />
       ) : null}
 
-      {templateLibraryOpen ? <TemplateLibrary serveUrl={serveUrl} live={daemon.state === "live"} busy={phase === "spawning" || Boolean(run && !isRunFinished(run.status))} onClose={() => setTemplateLibraryOpen(false)} onUse={prepareTemplate} /> : null}
+      {templateLibraryOpen ? <TemplateLibrary serveUrl={serveUrl} live={daemon.state === "live"} onClose={() => setTemplateLibraryOpen(false)} onUse={prepareTemplate} /> : null}
       {resultOpen && run ? <RunResult serveUrl={serveUrl} runId={run.run_id} onClose={() => setResultOpen(false)} /> : null}
 
       {panelAgent && snapshot ? (
