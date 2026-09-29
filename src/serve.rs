@@ -2166,11 +2166,19 @@ fn run_result(context: &Context_, id: &str) -> (u16, Value) {
         .join("outputs.json");
     let bytes = match fs::read(&path) {
         Ok(bytes) => bytes,
-        Err(error) => return (500, json!({"error": format!("cannot read run result: {error}")})),
+        Err(error) => {
+            return (
+                500,
+                json!({"error": format!("cannot read run result: {error}")}),
+            )
+        }
     };
     match serde_json::from_slice::<Value>(&bytes) {
         Ok(outputs) => (200, json!({"outputs": outputs})),
-        Err(error) => (500, json!({"error": format!("invalid run result: {error}")})),
+        Err(error) => (
+            500,
+            json!({"error": format!("invalid run result: {error}")}),
+        ),
     }
 }
 
