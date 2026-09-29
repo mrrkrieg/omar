@@ -89,8 +89,9 @@ the topology it compiles to.
 Nothing runs until you press **Confirm deploy**,
 then the diagram goes live.
 
-Or choose **Browse templates** in Mission Control. The library contains 24 local
-jobs across development, security, sales and operations. For an agent workflow,
+Or choose **Templates** at the bottom of Mission Control's chat navigation.
+The library contains 24 local jobs across development, security, sales and
+operations. For an agent workflow,
 choose a backend, enter instructions and local source paths (or paste source
 material), review the compiled topology, then confirm deployment. Finished runs
 offer **View result** with a text download. The exposed-secret screen runs in
