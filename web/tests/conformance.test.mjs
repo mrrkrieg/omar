@@ -228,6 +228,7 @@ describe("wire conformance between the fake and the real daemon", { skip: WIRE_S
   });
 
   test("preparing a template creates a separate, named chat with a durable proposal", async () => {
+    const before = await both("/v1/chat");
     const template = templates.find((item) => item.id === "docs");
     const description = "Update README examples using current source and tests, check local links, and report each changed file with the verification performed.";
     const payload = { title: template.title, description, program: templateProgram(template), filename: `${templateTeam(template)}.omar` };
@@ -236,6 +237,8 @@ describe("wire conformance between the fake and the real daemon", { skip: WIRE_S
     assert.equal(f.status, r.status);
     assert.equal(r.body.title, "Generate documentation");
     assert.equal(f.body.title, r.body.title);
+    assert.notEqual(r.body.id, before.real.body.id);
+    assert.notEqual(f.body.id, before.fake.body.id);
     assert.equal(r.body.message_count, 2);
     assert.equal(f.body.message_count, 2);
     const { real: realChat, fake: fakeChat } = await both("/v1/chat");
@@ -258,6 +261,9 @@ describe("wire conformance between the fake and the real daemon", { skip: WIRE_S
     const afterBadProgram = await both("/v1/chat");
     assert.equal(afterBadProgram.real.body.id, r.body.id);
     assert.equal(afterBadProgram.fake.body.id, f.body.id);
+    const reopen = async (base, id) => fetch(`${base}/v1/chats/${id}/activate`, post({}));
+    assert.equal((await reopen(real.url, before.real.body.id)).status, 200);
+    assert.equal((await reopen(fake.url, before.fake.body.id)).status, 200);
   });
 
   test("an unknown run is a 404 with an error field", async () => {
