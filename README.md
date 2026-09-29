@@ -89,6 +89,15 @@ the topology it compiles to.
 Nothing runs until you press **Confirm deploy**,
 then the diagram goes live.
 
+Or choose **Browse templates** in Mission Control. The library contains 24 local
+jobs across development, security, sales and operations. For an agent workflow,
+choose a backend, enter instructions and local source paths (or paste source
+material), review the compiled topology, then confirm deployment. Finished runs
+offer **View result** with a text download. The exposed-secret screen runs in
+your browser and reports redacted matches without sending source text to an
+agent. Other templates produce agent drafts and evidence references; verify
+test claims, security findings and calculations before using them.
+
 ### Terminal UI (Legacy)
 
 Note: The legacy terminal UI does not yet implement the deterministic model in the mission control.

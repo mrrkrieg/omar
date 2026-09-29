@@ -122,6 +122,44 @@ test("prompt to finished run, gated on an explicit confirmation", async ({ page 
   await expect(page.locator(".source-title")).toContainText("completed");
 });
 
+test("template selection prepares a runnable design and exposes its result", async ({ page }) => {
+  await useFakeServe(page);
+  await page.getByRole("button", { name: /Browse templates/ }).click();
+  const library = page.getByRole("dialog", { name: "Template library" });
+  await expect(library).toBeVisible();
+  await expect(library.locator(".template-card")).toHaveCount(24);
+  await library.getByRole("button", { name: "Security", exact: true }).click();
+  await library.getByRole("button", { name: /Test permissions/ }).click();
+  await expect(library).toContainText("tenant isolation");
+  await library.getByLabel("Local paths or source material").fill("Use fixtures/permissions; forbid cross-tenant reads.");
+  await library.getByRole("button", { name: "Prepare workflow" }).click();
+  await expect(library).toBeHidden();
+  await expect(page.getByRole("group", { name: "Deploy design" })).toBeVisible();
+  await page.getByRole("button", { name: "Show the source pane" }).click();
+  await expect(page.locator(".source-code")).toContainText("team Template13[");
+  await deploy(page);
+  await expect(page.locator(".connection")).toContainText("finished", { timeout: 30_000 });
+  await page.getByRole("button", { name: "View result" }).click();
+  const result = page.getByRole("dialog", { name: "Result" });
+  await expect(result.getByLabel("Output text")).toHaveValue("final answer");
+  await result.getByLabel("Output text").fill("edited local draft");
+  await expect(result.getByLabel("Output text")).toHaveValue("edited local draft");
+});
+
+test("secret screening redacts matches in the browser", async ({ page }) => {
+  await useFakeServe(page);
+  await page.getByRole("button", { name: /Browse templates/ }).click();
+  const library = page.getByRole("dialog", { name: "Template library" });
+  await library.getByRole("button", { name: "Security", exact: true }).click();
+  await library.getByRole("button", { name: /Find exposed secrets/ }).click();
+  const token = `ghp_${"A".repeat(24)}`;
+  await library.getByLabel("Text to screen").fill(token);
+  await library.getByRole("button", { name: "Scan text locally" }).click();
+  await expect(library.locator(".template-findings")).toContainText("1 potential exposure");
+  await expect(library.locator(".template-findings")).not.toContainText(token);
+  await expect(page.getByRole("group", { name: "Deploy design" })).toBeHidden();
+});
+
 test("the diagram reflects live reaction state from the run", async ({ page }) => {
   await useFakeServe(page);
   await draftUntilProposed(page);

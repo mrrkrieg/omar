@@ -12,6 +12,9 @@ import { OmarEditor } from "./omar-source";
 import { PortPanel } from "./port-panel";
 import { Resizer } from "./resizer";
 import { Waiting } from "./waiting";
+import { TemplateLibrary } from "./template-library";
+import { RunResult } from "./run-result";
+import { templateInputs, templateProgram, type Template } from "./lib/templates";
 import {
   eaDesignAgent,
   scriptedDesignAgent,
@@ -157,6 +160,8 @@ function StudioWorkspace({ serveUrl = "", historyUrl, designAgent, selectedId, o
   });
   // Deploying starts real agents, so the button arms a second, explicit step.
   const [confirming, setConfirming] = useState(false);
+  const [templateLibraryOpen, setTemplateLibraryOpen] = useState(false);
+  const [resultOpen, setResultOpen] = useState(false);
   const [daemon, setDaemon] = useState<Daemon>(
     isDemo ? { state: "demo" } : { state: "checking" },
   );
@@ -318,6 +323,7 @@ function StudioWorkspace({ serveUrl = "", historyUrl, designAgent, selectedId, o
     setSourceErrors([]);
     setSelection([]);
     setConfirming(false);
+    setResultOpen(false);
     setPhase("idle");
     setPrompt("");
     setError("");
@@ -680,6 +686,38 @@ function StudioWorkspace({ serveUrl = "", historyUrl, designAgent, selectedId, o
     }
   }
 
+  async function prepareTemplate(template: Template, request: string, backend: string) {
+    if (daemon.state !== "live" || (run && !isRunFinished(run.status))) {
+      throw new Error("A live, idle runtime is needed to prepare a template.");
+    }
+    const program = templateProgram(template, backend);
+    const filename = `Template${template.number}.omar`;
+    const check = await checkProgram(serveUrl, program, filename);
+    if (!check.ok || !check.preview) {
+      throw new Error(check.errors?.join("\n") || "The runtime could not preview this template.");
+    }
+    const proposal = { program, inputs: templateInputs(request), preview: check.preview };
+    setDesign(proposal);
+    setSource(program);
+    setFilename(filename);
+    setSourceErrors([]);
+    setSnapshot(check.preview);
+    setSteps(check.steps ?? []);
+    setRun(null);
+    setTab("source");
+    setPhase("review");
+    setConfirming(false);
+    setResultOpen(false);
+    setError("");
+    if (!arrangedRef.current) {
+      arrangedRef.current = true;
+      const available = workspaceRef.current?.clientWidth ?? 0;
+      if (available) setBuilderWidth(Math.round(available / 2));
+      setInspectorWidth(0);
+    }
+    setTemplateLibraryOpen(false);
+  }
+
   /**
    * Ask the run to stop, and keep saying so until it has.
    *
@@ -889,6 +927,10 @@ function StudioWorkspace({ serveUrl = "", historyUrl, designAgent, selectedId, o
             .join(" ")}
         >
           <h1 className="visually-hidden">{conversationTitle}</h1>
+          <div className="template-launch">
+            <button type="button" className="secondary-button" onClick={() => setTemplateLibraryOpen(true)}>Browse templates <span aria-hidden="true">↗</span></button>
+            {run && (run.status === "completed" || run.status === "stopped") && !snapshot ? <button type="button" className="primary-button" onClick={() => setResultOpen(true)}>View latest result</button> : null}
+          </div>
           {!isDemo && historyDrawer ? (
             <div className="chat-mobile-controls">
               <button
@@ -1032,8 +1074,9 @@ function StudioWorkspace({ serveUrl = "", historyUrl, designAgent, selectedId, o
               <span><small>TAG</small>{tag}</span>
               <span><small>LAG</small>{lag}</span>
             </div>
-            {(phase === "review" && design) || (phase === "observing" && run) ? (
+            {(phase === "review" && design) || (phase === "observing" && run) || (run && (run.status === "completed" || run.status === "stopped")) ? (
             <div className="workflow-actions">
+              {run && (run.status === "completed" || run.status === "stopped") ? <button className="primary-button" type="button" onClick={() => setResultOpen(true)}>View result</button> : null}
               {phase === "review" && design ? (
                 <span role="group" aria-label="Deploy design">
                   <button className="secondary-button" onClick={discardDesign} type="button">
@@ -1181,6 +1224,9 @@ function StudioWorkspace({ serveUrl = "", historyUrl, designAgent, selectedId, o
           onConfirm={() => void confirmDesign()}
         />
       ) : null}
+
+      {templateLibraryOpen ? <TemplateLibrary serveUrl={serveUrl} live={daemon.state === "live"} busy={phase === "spawning" || Boolean(run && !isRunFinished(run.status))} onClose={() => setTemplateLibraryOpen(false)} onUse={prepareTemplate} /> : null}
+      {resultOpen && run ? <RunResult serveUrl={serveUrl} runId={run.run_id} onClose={() => setResultOpen(false)} /> : null}
 
       {panelAgent && snapshot ? (
         <PortPanel

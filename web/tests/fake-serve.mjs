@@ -76,6 +76,13 @@ export async function startFakeServe({
         runs: [...chat.runs.values()].map((entry) => entry.record),
       });
     }
+    if (request.method === "GET" && url.pathname.startsWith("/v1/runs/") && url.pathname.endsWith("/result")) {
+      const id = url.pathname.slice("/v1/runs/".length, -"/result".length);
+      const entry = chat.runs.get(id);
+      if (!entry) return json(response, 404, { error: "unknown run" });
+      if (!["completed", "stopped"].includes(entry.record.status)) return json(response, 409, { error: "run has not finished" });
+      return json(response, 200, { outputs: { "flow.result": "final answer" } });
+    }
     // Before the run-record route, which matches any suffix — the same order
     // the daemon's own arms are in, and for the same reason.
     if (

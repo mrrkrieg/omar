@@ -29,6 +29,7 @@ import test, { after, before, describe } from "node:test";
 import WebSocket from "ws";
 
 import { startFakeServe } from "./fake-serve.mjs";
+import { templateProgram, templates } from "../app/lib/templates.ts";
 
 // The runtime is a sibling directory now, not a sibling checkout: these are
 // built from the same commit as the client they are checked against.
@@ -212,12 +213,33 @@ describe("wire conformance between the fake and the real daemon", { skip: WIRE_S
     assert.deepEqual(r.body.runs, []);
   });
 
+  test("every agent template compiles with the real OMAR compiler", async () => {
+    for (const template of templates) {
+      if (template.id === "secrets") continue;
+      const response = await fetch(`${real.url}/v1/programs/check`, post({
+        filename: `Template${template.number}.omar`,
+        program: templateProgram(template),
+      }));
+      const result = await response.json();
+      assert.equal(response.status, 200, `${template.id}: ${JSON.stringify(result)}`);
+      assert.equal(result.ok, true, `${template.id}: ${JSON.stringify(result.errors)}`);
+      assert.equal(result.preview?.team, `Template${template.number}`, template.id);
+    }
+  });
+
   test("an unknown run is a 404 with an error field", async () => {
     const { real: r, fake: f } = await both("/v1/runs/does-not-exist");
     assert.equal(r.status, 404);
     assert.equal(f.status, r.status);
     assert.equal(typeof r.body.error, "string");
     assert.equal(typeof f.body.error, "string");
+  });
+
+  test("an unknown run result is scoped to the current chat", async () => {
+    const { real: r, fake: f } = await both("/v1/runs/does-not-exist/result");
+    assert.equal(r.status, 404);
+    assert.equal(f.status, r.status);
+    assert.equal(r.body.error, "unknown run");
   });
 
   test("a malformed body is a 400 on both", async () => {
@@ -469,6 +491,10 @@ describe(
 
       assert.equal(latest.status, "completed", JSON.stringify(latest));
       assert.equal(latest.error, null);
+      const resultResponse = await fetch(`${real.url}/v1/runs/${record.run_id}/result`);
+      assert.equal(resultResponse.status, 200);
+      const { outputs } = await resultResponse.json();
+      assert.equal(typeof outputs["flow.blurb"], "string");
     });
   },
 );
