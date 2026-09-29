@@ -100,6 +100,8 @@ pub struct RunRecord {
 struct StartRunRequest {
     program: String,
     #[serde(default)]
+    filename: Option<String>,
+    #[serde(default)]
     conversation_id: Option<String>,
     #[serde(default)]
     inputs: BTreeMap<String, Value>,
@@ -226,6 +228,7 @@ struct PrepareTemplateChatRequest {
     title: String,
     description: String,
     program: String,
+    filename: String,
 }
 
 struct Chat {
@@ -1523,7 +1526,7 @@ fn prepare_template_chat(workspaces: &Arc<Workspaces>, body: &[u8]) -> (u16, Val
             json!({"error": "describe the work in at least 50 characters"}),
         );
     }
-    let staged = match stage_program(&request.program, Some("template.omar")) {
+    let staged = match stage_program(&request.program, Some(&request.filename)) {
         Ok(staged) => staged,
         Err((_, body)) => {
             return (
@@ -1927,7 +1930,11 @@ fn start_run(context: &Arc<Context_>, body: &[u8]) -> (u16, Value) {
     let run_dir = crate::ea::ea_state_dir(context.ea_id, &context.omar_dir)
         .join("serve")
         .join(&run_id);
-    let program_path = run_dir.join("program.omar");
+    let filename = request.filename.as_deref().unwrap_or("program.omar");
+    if !filename.ends_with(".omar") || filename.contains('/') || filename.contains('\\') {
+        return (400, json!({"error": "filename must be a plain .omar name"}));
+    }
+    let program_path = run_dir.join(filename);
     if let Err(error) =
         fs::create_dir_all(&run_dir).and_then(|_| fs::write(&program_path, &request.program))
     {
@@ -2751,6 +2758,7 @@ mod tests {
             "title": "Generate documentation",
             "description": "Too brief",
             "program": include_str!("../web/tests/fixtures/review-flow.omar"),
+            "filename": "Documentation.omar",
         })
         .to_string();
         let response = request(

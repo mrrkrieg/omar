@@ -181,6 +181,8 @@ test("template selection prepares a runnable design and exposes its result", asy
   await expect(page.locator(".source-code")).toContainText("team TestPermissionsTenantIsolation[");
   await deploy(page);
   await expect(page.locator(".connection")).toContainText("finished", { timeout: 30_000 });
+  const runs = await (await page.request.get(`${FAKE_SERVE_URL}/v1/runs`)).json();
+  expect(runs.runs[0].team).toBe("TestPermissionsTenantIsolation");
   await page.getByRole("button", { name: "View result" }).click();
   const result = page.getByRole("dialog", { name: "Result" });
   await expect(result.getByLabel("Output text")).toHaveValue("final answer");
@@ -203,6 +205,7 @@ test("documentation template keeps a readable workflow name and prepared chat af
   await expect(page.getByRole("group", { name: "Deploy design" })).toBeVisible();
   await page.getByRole("button", { name: "Show the source pane" }).click();
   await expect(page.locator(".source-code")).toContainText("team Documentation[");
+  await expect(page.getByLabel("Program file name")).toHaveValue("Documentation.omar");
 });
 
 test("secret screening redacts matches in the browser", async ({ page }) => {

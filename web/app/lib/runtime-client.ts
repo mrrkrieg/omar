@@ -425,6 +425,7 @@ export async function prepareTemplateConversation(serveUrl: string, request: {
   title: string;
   description: string;
   program: string;
+  filename: string;
 }): Promise<ConversationSummary> {
   const response = await fetch(`${normalizeRuntimeUrl(serveUrl)}/v1/chats/templates`, {
     method: "POST",

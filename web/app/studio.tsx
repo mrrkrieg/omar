@@ -14,7 +14,7 @@ import { Resizer } from "./resizer";
 import { Waiting } from "./waiting";
 import { TemplateLibrary } from "./template-library";
 import { RunResult } from "./run-result";
-import { templateProgram, type Template } from "./lib/templates";
+import { templateProgram, templateTeam, type Template } from "./lib/templates";
 import {
   eaDesignAgent,
   scriptedDesignAgent,
@@ -670,6 +670,7 @@ function StudioWorkspace({ serveUrl = "", historyUrl, designAgent, selectedId, o
       // they are looking at is what they are deploying.
       const record = await startRun(serveUrl, {
         program: source,
+        filename,
         inputs: design.inputs,
         conversation_id: conversationIdRef.current ?? undefined,
       });
@@ -695,6 +696,7 @@ function StudioWorkspace({ serveUrl = "", historyUrl, designAgent, selectedId, o
       title: template.title,
       description: request,
       program: templateProgram(template, backend),
+      filename: `${templateTeam(template)}.omar`,
     });
     setTemplateLibraryOpen(false);
     onSelect(conversation);

@@ -231,11 +231,14 @@ export async function startFakeServe({
       if (typeof payload.description !== "string" || Array.from(payload.description.trim()).length < 50) {
         return json(response, 400, { error: "describe the work in at least 50 characters" });
       }
+      if (typeof payload.filename !== "string" || !/^[A-Za-z_]\w*\.omar$/.test(payload.filename)) {
+        return json(response, 400, { error: "filename must be a plain .omar name" });
+      }
       if (typeof payload.program !== "string" || !/^team\s+[A-Za-z_]\w*\[/.test(payload.program) || payload.program.includes(INVALID_MARKER)) {
         return json(response, 400, { error: "invalid program" });
       }
       const title = payload.title.trim().replace(/\s+/g, " ");
-      const team = payload.program.match(/^team\s+([A-Za-z_]\w*)\[/)[1];
+      const team = payload.filename.replace(/\.omar$/, "");
       const next = newChat();
       next.title = title;
       activeChat = next;
@@ -570,6 +573,9 @@ export async function startFakeServe({
     if (typeof request.program !== "string" || request.program.length === 0) {
       return json(response, 400, { error: "invalid request: missing program" });
     }
+    if (request.filename && !/^[A-Za-z_]\w*\.omar$/.test(request.filename)) {
+      return json(response, 400, { error: "filename must be a plain .omar name" });
+    }
     if (request.program.includes(INVALID_MARKER)) {
       // What the real daemon does with a program omarc rejects.
       return json(response, 400, {
@@ -580,6 +586,7 @@ export async function startFakeServe({
     const runId = randomUUID();
     const address = `${host}:${server.address().port}`;
     const snapshot = structuredClone(golden);
+    if (request.filename) snapshot.team = request.filename.replace(/\.omar$/, "");
     snapshot.status = "running";
     const requested = request.inputs?.["flow.request"];
     for (const port of snapshot.ports) {

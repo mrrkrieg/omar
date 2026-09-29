@@ -230,7 +230,7 @@ describe("wire conformance between the fake and the real daemon", { skip: WIRE_S
   test("preparing a template creates a separate, named chat with a durable proposal", async () => {
     const template = templates.find((item) => item.id === "docs");
     const description = "Update README examples using current source and tests, check local links, and report each changed file with the verification performed.";
-    const payload = { title: template.title, description, program: templateProgram(template) };
+    const payload = { title: template.title, description, program: templateProgram(template), filename: `${templateTeam(template)}.omar` };
     const { real: r, fake: f } = await both("/v1/chats/templates", post(payload));
     assert.equal(r.status, 201, JSON.stringify(r.body));
     assert.equal(f.status, r.status);
@@ -417,7 +417,7 @@ describe("wire conformance between the fake and the real daemon", { skip: WIRE_S
     assert.equal(response.status, 202, `proposal rejected: ${response.status}`);
 
     const { messages } = await (await fetch(`${real.url}/v1/chat`)).json();
-    const proposal = messages.find((message) => message.design);
+    const proposal = messages.findLast((message) => message.design);
     assert.ok(proposal, "the proposal reached the conversation");
 
     // Everything the renderer resolves against, produced by the real compiler.
