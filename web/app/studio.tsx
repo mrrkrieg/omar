@@ -889,7 +889,7 @@ function StudioWorkspace({ serveUrl = "", historyUrl, designAgent, selectedId, o
       </div>
 
       <div className="studio-content">
-        {isDemo ? <nav className="history-rail" aria-label="Omar"><OmarLogo /><button type="button" className="rail-templates" onClick={() => setTemplateLibraryOpen(true)} aria-label="Templates" title="Templates"><TemplateIcon /></button></nav> : null}
+        {isDemo ? <nav className="history-rail demo-navigation" aria-label="Omar"><OmarLogo /><button type="button" className="rail-templates" onClick={() => setTemplateLibraryOpen(true)} aria-label="Templates" title="Templates"><TemplateIcon /></button></nav> : null}
         {!isDemo && (!historyDrawer || drawerOpen) ? (
           <ChatHistory
             serveUrl={historyUrl}

@@ -2183,7 +2183,10 @@ h2 {
   outline-offset: 2px;
 }
 .history-rail .rail-templates { margin-top: auto; }
-@media (max-width: 900px) { .history-rail { display: none; } }
+@media (max-width: 900px) {
+  .history-rail:not(.demo-navigation) { display: none; }
+  .history-rail.demo-navigation { flex-basis: 52px; padding: 8px 6px; }
+}
 
 .chat-history .chat-running { color: #c4b5fd; font-weight: 700; }
 
