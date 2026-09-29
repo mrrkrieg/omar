@@ -2127,6 +2127,9 @@ h2 {
 .chat-history li span { overflow-wrap: anywhere; font-size: 14px; }
 .chat-history [aria-current="true"] { border-color: var(--purple); background: var(--purple-soft); }
 .chat-history .history-error p { color: #ffb4b4; }
+.history-footer { margin-top: auto; padding-top: 12px; border-top: 1px solid var(--line); }
+.history-footer button { width: 100%; display: flex; align-items: center; gap: 10px; text-align: left; font-size: 14px; font-weight: 600; background: transparent; }
+.template-icon { flex: none; width: 19px; height: 19px; color: var(--purple); }
 .history-drawer {
   position: fixed;
   inset: 0 auto 0 0;
@@ -2179,6 +2182,7 @@ h2 {
   outline: 2px solid var(--purple);
   outline-offset: 2px;
 }
+.history-rail .rail-templates { margin-top: auto; }
 @media (max-width: 900px) { .history-rail { display: none; } }
 
 .chat-history .chat-running { color: #c4b5fd; font-weight: 700; }
@@ -2222,8 +2226,8 @@ h2 {
 .deploy-confirmation p { margin: 12px 0; line-height: 1.6; font-size: 14px; }
 .deploy-confirmation-actions { display: flex; justify-content: flex-end; gap: 12px; margin-top: 24px; }
 /* Template picker shares the studio's dark palette but owns its scroll area. */
-.template-launch { padding: 12px 18px 0; }
-.template-launch button { width: 100%; display: flex; justify-content: space-between; }
+.result-launch { padding: 12px 18px 0; }
+.result-launch button { width: 100%; }
 .template-library { width: min(1100px, calc(100vw - 32px)); height: min(760px, calc(100vh - 32px)); max-width: none; max-height: none; padding: 0; border: 1px solid var(--line); border-radius: 18px; background: var(--panel); color: var(--text); box-shadow: 0 24px 90px #000b; }
 .template-library::backdrop { background: #050509c9; }
 .template-library-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; padding: 22px 26px; border-bottom: 1px solid var(--line); }

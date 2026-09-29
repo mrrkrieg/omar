@@ -2,7 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChatMessage as ChatMessageView } from "./chat-message";
-import { ChatHistory, OmarLogo, SidebarIcon, useHistoryDrawer } from "./chat-history";
+import { ChatHistory, OmarLogo, SidebarIcon, TemplateIcon, useHistoryDrawer } from "./chat-history";
 import { DeployConfirmation } from "./deploy-confirmation";
 import { AgentTerminal } from "./agent-terminal";
 import { Timeline } from "./timeline";
@@ -182,7 +182,7 @@ function StudioWorkspace({ serveUrl = "", historyUrl, designAgent, selectedId, o
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [historyRevision, setHistoryRevision] = useState(0);
   const historyButtonRef = useRef<HTMLButtonElement>(null);
-    const historyRailButtonRef = useRef<HTMLButtonElement>(null);
+  const historyRailButtonRef = useRef<HTMLButtonElement>(null);
   const historyDrawer = useHistoryDrawer();
   useEffect(() => {
     if (historyDrawer && !switchingChat && serveUrl !== historyUrl) historyButtonRef.current?.focus();
@@ -193,7 +193,7 @@ function StudioWorkspace({ serveUrl = "", historyUrl, designAgent, selectedId, o
     else setHistoryOpen(false);
     historyButtonRef.current?.focus();
   }
-    function openHistory() {
+  function openHistory() {
     if (historyDrawer) setDrawerOpen(true);
     else setHistoryOpen(true);
   }
@@ -889,7 +889,7 @@ function StudioWorkspace({ serveUrl = "", historyUrl, designAgent, selectedId, o
       </div>
 
       <div className="studio-content">
-        {isDemo ? <aside className="history-rail" aria-label="Omar"><OmarLogo /></aside> : null}
+        {isDemo ? <nav className="history-rail" aria-label="Omar"><OmarLogo /><button type="button" className="rail-templates" onClick={() => setTemplateLibraryOpen(true)} aria-label="Templates" title="Templates"><TemplateIcon /></button></nav> : null}
         {!isDemo && (!historyDrawer || drawerOpen) ? (
           <ChatHistory
             serveUrl={historyUrl}
@@ -897,9 +897,13 @@ function StudioWorkspace({ serveUrl = "", historyUrl, designAgent, selectedId, o
             onSwitchingChange={setSelectingChat}
             mobile={historyDrawer}
             revision={`${historyRevision}:${messages.length}`}
-                        collapsed={!historyDrawer && !historyOpen}
+            collapsed={!historyDrawer && !historyOpen}
             onClose={closeHistory}
-                        onOpen={openHistory}
+            onOpen={openHistory}
+            onTemplates={() => {
+              if (historyDrawer) setDrawerOpen(false);
+              setTemplateLibraryOpen(true);
+            }}
             railButtonRef={historyRailButtonRef}
             onSelect={(conversation) => {
               onSelect(conversation);
@@ -927,10 +931,7 @@ function StudioWorkspace({ serveUrl = "", historyUrl, designAgent, selectedId, o
             .join(" ")}
         >
           <h1 className="visually-hidden">{conversationTitle}</h1>
-          <div className="template-launch">
-            <button type="button" className="secondary-button" onClick={() => setTemplateLibraryOpen(true)}>Browse templates <span aria-hidden="true">↗</span></button>
-            {run && (run.status === "completed" || run.status === "stopped") && !snapshot ? <button type="button" className="primary-button" onClick={() => setResultOpen(true)}>View latest result</button> : null}
-          </div>
+          {run && (run.status === "completed" || run.status === "stopped") && !snapshot ? <div className="result-launch"><button type="button" className="primary-button" onClick={() => setResultOpen(true)}>View latest result</button></div> : null}
           {!isDemo && historyDrawer ? (
             <div className="chat-mobile-controls">
               <button

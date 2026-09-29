@@ -122,9 +122,35 @@ test("prompt to finished run, gated on an explicit confirmation", async ({ page 
   await expect(page.locator(".source-title")).toContainText("completed");
 });
 
+test("templates stay at the bottom of navigation when the sidebar folds or becomes a drawer", async ({ page }) => {
+  await useFakeServe(page);
+  const history = page.getByRole("complementary", { name: "Chat history" });
+  const templates = history.getByRole("button", { name: "Templates" });
+  const historyBox = (await history.boundingBox())!;
+  const templatesBox = (await templates.boundingBox())!;
+  expect(templatesBox.y + templatesBox.height).toBeGreaterThan(historyBox.y + historyBox.height - 40);
+  await expect(page.locator(".builder-panel").getByRole("button", { name: /Browse templates/ })).toHaveCount(0);
+  await templates.click();
+  await expect(page.getByRole("dialog", { name: "Template library" })).toBeVisible();
+  await page.getByRole("button", { name: "Close template library" }).click();
+
+  await history.getByRole("button", { name: "Fold chat history" }).click();
+  const rail = page.getByRole("navigation", { name: "Chat navigation" });
+  await rail.getByRole("button", { name: "Templates" }).click();
+  await expect(page.getByRole("dialog", { name: "Template library" })).toBeVisible();
+  await page.getByRole("button", { name: "Close template library" }).click();
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("button", { name: "Open chat history" }).click();
+  const drawer = page.getByRole("dialog", { name: "Chat history" });
+  await drawer.getByRole("button", { name: "Templates" }).click();
+  await expect(drawer).toBeHidden();
+  await expect(page.getByRole("dialog", { name: "Template library" })).toBeVisible();
+});
+
 test("template selection prepares a runnable design and exposes its result", async ({ page }) => {
   await useFakeServe(page);
-  await page.getByRole("button", { name: /Browse templates/ }).click();
+  await page.getByRole("complementary", { name: "Chat history" }).getByRole("button", { name: "Templates" }).click();
   const library = page.getByRole("dialog", { name: "Template library" });
   await expect(library).toBeVisible();
   await expect(library.locator(".template-card")).toHaveCount(24);
@@ -148,7 +174,7 @@ test("template selection prepares a runnable design and exposes its result", asy
 
 test("secret screening redacts matches in the browser", async ({ page }) => {
   await useFakeServe(page);
-  await page.getByRole("button", { name: /Browse templates/ }).click();
+  await page.getByRole("complementary", { name: "Chat history" }).getByRole("button", { name: "Templates" }).click();
   const library = page.getByRole("dialog", { name: "Template library" });
   await library.getByRole("button", { name: "Security", exact: true }).click();
   await library.getByRole("button", { name: /Find exposed secrets/ }).click();
