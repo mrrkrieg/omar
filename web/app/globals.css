@@ -2276,7 +2276,7 @@ h2 {
   .workflow-advice button { min-height: 44px; }
 }
 
-.automatic-decisions { flex: 0 0 auto; max-height: 220px; overflow: auto; border-bottom: 1px solid var(--border, #ccc); padding: 8px 20px; font-size: 12px; }
+.automatic-decisions { color: #252429; background: #f6f6f4; flex: 0 0 auto; max-height: 220px; overflow: auto; border-bottom: 1px solid var(--border, #ccc); padding: 8px 20px; font-size: 12px; }
 .automatic-decisions details { padding: 6px 0; }
 .automatic-decisions summary { cursor: pointer; overflow-wrap: anywhere; }
 .automatic-decisions summary span, .automatic-decisions summary strong { margin-right: 12px; }

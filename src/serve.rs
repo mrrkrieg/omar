@@ -777,8 +777,6 @@ fn handle_client(mut stream: TcpStream, workspaces: Arc<Workspaces>) -> Result<(
         Some((pathname, query)) => (pathname.to_string(), Some(query)),
         None => (request_target.to_string(), None),
     };
-    #[cfg(not(feature = "decision-support"))]
-    let _ = query;
 
     let mut content_length = 0usize;
     let mut host = None;
@@ -911,7 +909,8 @@ fn handle_client(mut stream: TcpStream, workspaces: Arc<Workspaces>) -> Result<(
 
     // Geometry is only a terminal handshake parameter; leave other API paths
     // and their routing unchanged.
-    let (terminal_path, terminal_query) = path.split_once('?').unwrap_or((&path, ""));
+    let terminal_path = path.as_str();
+    let terminal_query = query.unwrap_or("");
     // A terminal is the one endpoint where a wrong answer hands an attacker a
     // shell, and CORS does not apply to WebSockets: the browser opens the
     // socket regardless and only the server can refuse it.

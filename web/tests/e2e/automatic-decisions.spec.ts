@@ -11,9 +11,9 @@ test("automatic gate explains escalation and preserves the final revision route"
     await expect(page.getByLabel("Describe a workflow")).toBeEnabled();
     await request.post(`${fake.url}/v1/agent/proposals`, { data: { token: fake.agentToken, summary: "Check the opening before the next step.", program, inputs: { "check.draft": "Example announced its launch." } } });
     const decisions = page.getByLabel("Automatic workflow decisions");
-    await expect(decisions).toContainText("Jev check · reasoning fallback");
+    await expect(decisions).toContainText("Jev check · reasoning if needed");
     await decisions.locator("summary").click();
-    await expect(decisions).toContainText("not_satisfied → check.revise");
+    await expect(decisions).toContainText("Requirement not met → check.revise");
     await page.getByRole("button", { name: "Deploy", exact: true }).click();
     await page.getByRole("button", { name: "Confirm deploy", exact: true }).click();
     await expect(decisions).toContainText("Reasoning review");
