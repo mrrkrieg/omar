@@ -16,6 +16,7 @@ import { Resizer } from "./resizer";
 import { useWorkflowNames } from "./lib/workflow-names";
 import { WorkflowIcon } from "./workflow-icon";
 import { StepInspector } from "./step-inspector";
+import { configurationDraftKey, readConfigurationDraft, saveConfigurationDraft } from "./lib/configuration-draft";
 import { Waiting } from "./waiting";
 import {
   eaDesignAgent,
@@ -145,6 +146,7 @@ function StudioWorkspace({ serveUrl = "", historyUrl, designAgent, selectedId, o
   const [sourceErrors, setSourceErrors] = useState<string[]>([]);
   const [checking, setChecking] = useState(false);
   const [applyingConfiguration, setApplyingConfiguration] = useState(false);
+  const configurationDraftRef = useRef<{ key: string; original: string } | null>(null);
   /** Every tag the program passes through, projected or observed. */
   const [steps, setSteps] = useState<TimelineStep[]>([]);
   const [truncated, setTruncated] = useState(false);
@@ -332,6 +334,7 @@ function StudioWorkspace({ serveUrl = "", historyUrl, designAgent, selectedId, o
     setSnapshot(null);
     setSource("");
     setApplyingConfiguration(false);
+    configurationDraftRef.current = null;
     setFilename("program.omar");
     setSourceErrors([]);
     setSelection([]);
@@ -601,7 +604,11 @@ function StudioWorkspace({ serveUrl = "", historyUrl, designAgent, selectedId, o
       }
       setConfirming(false);
       setDesign(message.design);
-      setSource(message.design.program);
+      const draftKey = configurationDraftKey(historyUrl, conversationIdRef.current ?? "demo", message.sequence);
+      configurationDraftRef.current = { key: draftKey, original: message.design.program };
+      let draftProgram = message.design.program;
+      try { draftProgram = readConfigurationDraft(localStorage, draftKey, draftProgram); } catch { /* Site storage may be unavailable. */ }
+      setSource(draftProgram);
       setSourceErrors([]);
       setFilename(`${message.design.preview.team}.omar`);
       // Show the proposed topology, not whatever was on screen before.
@@ -764,6 +771,8 @@ function StudioWorkspace({ serveUrl = "", historyUrl, designAgent, selectedId, o
       if (scope !== scopeRef.current || sourceRef.current !== original) throw new Error("The workflow changed during validation. Reopen this step and try again.");
       if (runRef.current && !isRunFinished(runRef.current.status)) throw new Error("The workflow started during validation. Apply these changes after it finishes.");
       if (!checked.ok) throw new Error((checked.errors ?? ["The configuration did not compile."]).join("\n"));
+      const draft = configurationDraftRef.current;
+      if (draft) saveConfigurationDraft(localStorage, draft.key, draft.original, nextSource);
       setSource(nextSource);
       setSourceErrors([]);
       if (checked.preview && !runRef.current) setSnapshot(checked.preview);
@@ -782,6 +791,11 @@ function StudioWorkspace({ serveUrl = "", historyUrl, designAgent, selectedId, o
   }
 
   function discardDesign() {
+    const draft = configurationDraftRef.current;
+    if (draft) {
+      try { localStorage.removeItem(draft.key); } catch { /* Discard still clears the current view when storage is unavailable. */ }
+    }
+    configurationDraftRef.current = null;
     disconnectRef.current?.();
     disconnectRef.current = null;
     setTab("source");
