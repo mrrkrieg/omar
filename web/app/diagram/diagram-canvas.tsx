@@ -10,6 +10,7 @@ import {
   useState,
 } from "react";
 import { formatDuration, webAgents, type DiagramSnapshot } from "../lib/protocol";
+import { shortTaskText, taskCopy } from "../lib/task-copy";
 
 /**
  * Runtime instances stay grouped with their boundary ports and reactions.
@@ -133,6 +134,7 @@ type ReactionView = {
   name: string;
   meta: string;
   contract: string;
+  description: string;
   backend: string;
   status: string;
   box: Box;
@@ -403,7 +405,7 @@ function reactionLabels(snapshot: DiagramSnapshot): Map<string, ReactionLabels> 
   const agents = new Map(
     snapshot.agents.map((agent) => [
       agent.id,
-      { name: agent.name, backend: agent.backend },
+      agent,
     ]),
   );
   return new Map(
@@ -415,15 +417,13 @@ function reactionLabels(snapshot: DiagramSnapshot): Map<string, ReactionLabels> 
       const detail = [owner?.backend, reaction.status]
         .filter(Boolean)
         .join(" \u00b7 ");
-      // The runtime names reactions `reaction.N` because OMAR prompts are
-      // anonymous, which makes a poor headline. Lead with the agent and let the
-      // contract say what it writes; honour a real name if one ever arrives.
+      // New workflows carry task copy. Preserve the fallback for old snapshots.
       const generated = /(?:^|\.)reaction\.\d+$/.test(reaction.name);
       return [
         reaction.id,
         {
-          name: generated ? agent : reaction.name,
-          meta: generated ? detail : `${agent} \u00b7 ${detail}`,
+          name: taskCopy(reaction, owner).title,
+          meta: reaction.title || generated ? detail : `${agent} \u00b7 ${detail}`,
         },
       ];
     }),
@@ -782,6 +782,7 @@ function buildLayout(
       name: label.name,
       meta: label.meta,
       contract: reaction.contract,
+      description: taskCopy(reaction).description,
       backend: snapshot.agents.find((agent) => agent.id === reaction.agent)?.backend ?? "Agent",
       status: reaction.status,
       box: nodeBoxes.get(reaction.id) ?? { x: 0, y: 0, ...REACTION_SIZE },
@@ -1553,6 +1554,7 @@ export function DiagramCanvas({
                   }}
                   transform={`translate(${reaction.box.x},${reaction.box.y})`}
                 >
+                  <title>{reaction.description ? `${reaction.name}: ${reaction.description}` : reaction.name}</title>
                   <rect className="omar-reaction-body" width={reaction.box.width} height={reaction.box.height} rx={9} />
                   <path className="omar-reaction-accent" d={`M9 1.5 H${reaction.box.width - 9}`} />
                   <circle className="node-connection" cx={0} cy={reaction.box.height / 2} r={4} />
@@ -1579,10 +1581,10 @@ export function DiagramCanvas({
                     x={REACTION_TEXT_X}
                     y={29}
                   >
-                    {reaction.name}
+                    {shortTaskText(reaction.name, Math.floor((reaction.box.width - REACTION_TEXT_X - CARD_END_PADDING - (reaction.within === null ? 0 : WITHIN_ROOM)) / 6.9))}
                   </text>
                   <text className="omar-reaction-description" x={REACTION_TEXT_X} y={46}>
-                    {reaction.contract.length > 24 ? `${reaction.contract.slice(0, 23)}…` : reaction.contract}
+                    {shortTaskText(reaction.description || reaction.contract, Math.floor((reaction.box.width - REACTION_TEXT_X - CARD_END_PADDING - (reaction.within === null ? 0 : WITHIN_ROOM)) / 5.2))}
                   </text>
                   <rect className="omar-model-badge" x={REACTION_TEXT_X} y={57} width={16} height={16} rx={5} />
                   <text className="omar-model-mark" x={REACTION_TEXT_X + 8} y={68} textAnchor="middle">{reaction.backend.slice(0, 1)}</text>

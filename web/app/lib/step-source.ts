@@ -78,11 +78,16 @@ export function locateStep(source: string, snapshot: DiagramSnapshot, reaction: 
     const backend = all[agent + 2];
     const close = all.findIndex((token, i) => i > position + 2 && !token.string && token.text === ")");
     if (close < 0 || all[close + 1]?.text !== "->") return null;
-    const body = all.findIndex((token, i) => i > close + 1 && token.string);
+    const firstString = all.findIndex((token, i) => i > close + 1 && token.string);
     // Constant strings in output contracts are deliberately left to source editing.
-    if (body < 0 || all[body - 1]?.text === "=" || body >= end) return null;
+    if (firstString < 0 || all[firstString - 1]?.text === "=" || firstString >= end) return null;
+    const hasTask = all[firstString - 2]?.text === "task" && all[firstString - 1]?.text === "(";
+    // Display strings must never be edited as the agent's execution prompt.
+    const body = hasTask ? firstString + 4 : firstString;
+    if (hasTask && (all[firstString + 1]?.text !== "," || !all[firstString + 2]?.string || all[firstString + 3]?.text !== ")")) return null;
+    if (!all[body]?.string || body >= end) return null;
     const deadline = all.findIndex((token, i) => i > close + 1 && i < body && !token.string && token.text === "within");
-    const contractEnd = deadline < 0 ? body : deadline;
+    const contractEnd = deadline < 0 ? (hasTask ? firstString - 2 : body) : deadline;
     const triggersSpan = { start: all[position + 2].end, end: all[close].start };
     const contractSpan = { start: all[close + 2].start, end: all[contractEnd - 1].end };
     return {

@@ -58,6 +58,31 @@ async function useFakeServe(page: import("@playwright/test").Page) {
   await expect(page.locator(".daemon")).toContainText(FAKE_SERVE_URL);
 }
 
+test("generated task copy appears on cards and in details after reload", async ({ page }) => {
+  await fake.close();
+  const title = "Prepare reel content";
+  const description = "Research and verify a fresh story, then create the script, narration and captions. Complete this step in ChatGPT and paste the production packet into OMAR.";
+  fake = await startFakeServe({
+    port: FAKE_SERVE_PORT,
+    taskMetadata: { "reaction::flow.reaction.0": { title, description } },
+  }) as FakeServe;
+  await useFakeServe(page);
+  await draftUntilProposed(page);
+  const card = page.getByRole("button", { name: "Inspect flow.reaction.0", exact: true });
+  await expect(card.locator(".omar-reaction-name")).toHaveText(title);
+  await card.click();
+  const details = page.getByRole("complementary", { name: "Step details" });
+  await expect(details.getByRole("heading", { name: title })).toBeVisible();
+  await expect(details.locator(".inspector-description")).toHaveText(description);
+  await expect(details.locator("code").filter({ hasText: "flow.reaction.0" })).toBeHidden();
+  await details.getByText("Technical details", { exact: true }).click();
+  await expect(details.locator("code").filter({ hasText: "flow.reaction.0" })).toBeVisible();
+  await page.reload();
+  await expect(card.locator(".omar-reaction-name")).toHaveText(title);
+  await card.click();
+  await expect(details.locator(".inspector-description")).toHaveText(description);
+});
+
 test("deployment confirmation is a modal with lifecycle guidance and keyboard cancellation", async ({ page }) => {
   await useFakeServe(page);
   await draftUntilProposed(page);

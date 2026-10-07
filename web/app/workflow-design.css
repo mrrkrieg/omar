@@ -164,7 +164,10 @@ button:focus-visible, select:focus-visible { outline: 2px solid #9168ff; outline
 .step-inspector header button { display: grid; place-items: center; width: 28px; height: 28px; border: 0; border-radius: 6px; color: #80758c; background: #f5f3f8; }
 .inspector-type { padding: 5px 8px; border-radius: 5px; color: #805ac0; background: #f1eafa; font-size: 9px; letter-spacing: .08em; font-weight: 700; }
 .step-inspector h3 { margin: 18px 0 7px; font-size: 17px; overflow-wrap: anywhere; }
-.inspector-description { color: #8b8195; font-size: 11px; line-height: 1.6; overflow-wrap: anywhere; }
+.inspector-description { color: #756b80; font-size: 12px; line-height: 1.6; white-space: pre-line; overflow-wrap: anywhere; }
+.step-technical-details { margin-top: 14px; color: #756b80; font-size: 11px; }
+.step-technical-details summary { cursor: pointer; }
+.step-technical-details code { overflow-wrap: anywhere; }
 .inspector-field { display: flex; flex-direction: column; gap: 8px; margin-top: 20px; font-size: 12px; }
 .inspector-field > span:first-child { color: #8c8295; font-size: 10px; }
 .step-model { display: flex; align-items: center; gap: 8px; padding: 10px; border: 1px solid #e5dfea; border-radius: 8px; background: #faf9fc; }
