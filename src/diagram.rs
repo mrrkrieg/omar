@@ -74,6 +74,7 @@ pub enum DiagramEventKind {
     TagAdvanced,
     ReactionStarted,
     ReactionCompleted,
+    DecisionUpdated,
     RunCompleted,
     RunFailed,
 }
@@ -146,6 +147,12 @@ pub struct DiagramTimer {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct DiagramReaction {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub decision_gate: Option<crate::decisions::automatic::DecisionGate>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub decision: Option<crate::decisions::automatic::DecisionUpdate>,
     pub id: String,
     pub name: String,
     pub agent: String,
@@ -272,6 +279,8 @@ impl DiagramSnapshot {
             .reactions
             .iter()
             .map(|(name, reaction)| DiagramReaction {
+                decision_gate: reaction.decision.clone(),
+                decision: None,
                 id: reaction_id(name),
                 name: name.clone(),
                 agent: agent_id(&reaction.agent),
@@ -372,6 +381,12 @@ pub trait TopologyObserver: Send + Sync {
         _reaction: &str,
         _invocation_id: &str,
         _writes: &BTreeMap<String, Value>,
+    ) {
+    }
+    fn decision_updated(
+        &self,
+        _reaction: &str,
+        _decision: &crate::decisions::automatic::DecisionUpdate,
     ) {
     }
     fn run_completed(&self, _outputs: &BTreeMap<String, Value>) {}
@@ -541,6 +556,23 @@ impl TopologyObserver for DiagramPublisher {
                 "writes": writes
             }),
             apply,
+        );
+    }
+
+    fn decision_updated(
+        &self,
+        reaction: &str,
+        decision: &crate::decisions::automatic::DecisionUpdate,
+    ) {
+        self.publish_with(
+            DiagramEventKind::DecisionUpdated,
+            None,
+            json!({"reaction": reaction_id(reaction), "decision": decision}),
+            |snapshot| {
+                if let Some(item) = snapshot.reactions.iter_mut().find(|r| r.name == reaction) {
+                    item.decision = Some(decision.clone());
+                }
+            },
         );
     }
 
@@ -859,6 +891,7 @@ mod tests {
             reactions: BTreeMap::from([(
                 "respond".to_string(),
                 ReactionState {
+                    decision: None,
                     order: 0,
                     agent: "worker".to_string(),
                     instance: String::new(),
@@ -928,6 +961,7 @@ mod tests {
             reactions: BTreeMap::from([(
                 "writer.reaction.0".to_string(),
                 ReactionState {
+                    decision: None,
                     order: 0,
                     instance: "writer".to_string(),
                     agent: "writer.agent".to_string(),

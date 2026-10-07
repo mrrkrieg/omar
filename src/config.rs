@@ -96,6 +96,9 @@ pub struct SlackBridgeConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DecisionSupportConfig {
+    /// Allow Jev calls in explicit `jev(...)` workflow gates. Off uses reasoning.
+    #[serde(default)]
+    pub automatic_enabled: bool,
     #[serde(default)]
     pub enabled: bool,
     /// The default applies only to newly admitted runs. `off` is inert;
@@ -156,6 +159,7 @@ impl Default for DecisionSupportConfig {
     fn default() -> Self {
         Self {
             enabled: false,
+            automatic_enabled: false,
             default_mode: default_decision_mode(),
             provider: default_decision_provider(),
             model: default_decision_model(),

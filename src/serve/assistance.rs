@@ -385,15 +385,18 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join("omar");
         fs::create_dir(&root).unwrap();
-        let source = temp.path().join("source");
-        fs::create_dir(&source).unwrap();
-        fs::write(source.join("result.md"), "A guide for beginners. 文本").unwrap();
         let own =
-            crate::workspace::Workspace::create(&root, 0, "deployment", "flow", None, &source)
-                .unwrap();
+            crate::workspace::Workspace::create(&root, 0, "deployment", "flow", None).unwrap();
         let foreign =
-            crate::workspace::Workspace::create(&root, 1, "deployment-b", "flow", None, &source)
-                .unwrap();
+            crate::workspace::Workspace::create(&root, 1, "deployment-b", "flow", None).unwrap();
+        for workspace in [&own, &foreign] {
+            fs::write(
+                workspace.worktree(&root).join("result.md"),
+                "A guide for beginners. 文本",
+            )
+            .unwrap();
+            workspace.snapshot(&root, "Test artifact").unwrap();
+        }
         let saved = own.snapshots(&root).unwrap().pop().unwrap();
         let other = foreign.snapshots(&root).unwrap().pop().unwrap();
         let server = server(&root);

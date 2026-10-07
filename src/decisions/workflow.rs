@@ -299,10 +299,10 @@ pub fn scenario_failures(
             ));
         }
     }
-    if !inputs
+    if inputs
         .get("flow.brief")
         .and_then(serde_json::Value::as_str)
-        .is_some_and(|s| !s.trim().is_empty())
+        .is_none_or(|s| s.trim().is_empty())
     {
         failures.push("A nonempty flow.brief input must be supplied.".into());
     }

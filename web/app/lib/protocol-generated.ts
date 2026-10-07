@@ -25,7 +25,7 @@ export const PORT_KINDS = ["input", "output", "action"] as const;
 export type PortKind = (typeof PORT_KINDS)[number];
 
 /** What happened, as the event stream names it. */
-export const DIAGRAM_EVENT_KINDS = ["run_started", "tag_advanced", "reaction_started", "reaction_completed", "run_completed", "run_failed"] as const;
+export const DIAGRAM_EVENT_KINDS = ["run_started", "tag_advanced", "reaction_started", "reaction_completed", "decision_updated", "run_completed", "run_failed"] as const;
 export type DiagramEventKind = (typeof DIAGRAM_EVENT_KINDS)[number];
 
 /** Who spoke. */
@@ -74,7 +74,13 @@ export type DiagramTimer = { id: string, name: string, offset: number,
  */
 period: number, last_tag: DiagramTag | null, instance: string, };
 
-export type DiagramReaction = { id: string, name: string, agent: string, order: number, triggers: Array<string>, effects: Array<string>, contract: string, status: ReactionStatus, invocation_id: string | null, instance: string,
+export type DecisionRoute = { outcome: string, port: string, description: string, };
+
+export type DecisionGate = { profile: string, criterion: string, routes: Array<DecisionRoute>, };
+
+export type DecisionUpdate = { invocation_id: string, profile: string, criterion: string, stage: string, reason: string, route: string | null, confidence: number | null, selected_probability: number | null, sufficient_context: number | null, };
+
+export type DiagramReaction = { decision_gate?: DecisionGate, decision?: DecisionUpdate, id: string, name: string, agent: string, order: number, triggers: Array<string>, effects: Array<string>, contract: string, status: ReactionStatus, invocation_id: string | null, instance: string,
 /**
  * Nanoseconds this reaction gave itself, or `None` for one bounded only by
  * the run. Carried so a client can draw the bound rather than leaving the

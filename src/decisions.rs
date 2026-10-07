@@ -1,9 +1,7 @@
 //! Advisory decision support for Mission Control.
 //!
-//! This module deliberately has no dependency on the topology control plane.
-//! It may observe completed diagram events and persist an operator-requested
-//! suggestion, but it cannot write a port, send an agent message, or change a
-//! run's lifecycle.
+//! The advisory service observes completed events and cannot control a run.
+//! The separate `automatic` module executes explicitly declared workflow gates.
 
 // The protocol-generation test exports these feature-gated wire types from a
 // default build. Outside that test, the disabled feature deliberately leaves
@@ -14,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use ts_rs::TS;
 
+pub mod automatic;
 pub mod workflow;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -280,6 +279,16 @@ mod enabled {
                 }
             }
         })
+    }
+
+    pub(super) fn automatic_evaluate(
+        config: &DecisionSupportConfig,
+        input: &super::workflow::AdviceInput,
+    ) -> Result<super::workflow::AdviceResult> {
+        let request = workflow::prepare(input)?;
+        let response = TypeSafeProvider::new(config)?.evaluate(&request)?;
+        let (_, result) = workflow::response_result(input, &request, response)?;
+        Ok(result)
     }
 
     struct TypeSafeProvider {

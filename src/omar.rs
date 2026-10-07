@@ -608,6 +608,7 @@ async fn async_main() -> Result<()> {
             topology::run_topology(
                 &bytecode,
                 topology::TopologyRunConfig {
+                    decision_support: &config.decision_support,
                     ea_id: target.id,
                     omar_dir: &omar_dir,
                     generated: &generated,

@@ -143,6 +143,7 @@ jobs:
           test: false
       - run: cargo clippy --bin omar --features decision-support -- -D warnings
       - run: cargo test --bin omar --features decision-support decisions:: -- --test-threads=1
+      - run: cargo test --bin omar --features decision-support topology:: -- --test-threads=1
       - run: cargo test --bin omar --features decision-support serve::assistance::tests -- --test-threads=1
       - run: cargo test --bin omar --features decision-support advisory_reader -- --test-threads=1
       - run: cargo test --bin omar --features decision-support protocol::

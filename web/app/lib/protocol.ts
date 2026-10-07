@@ -15,6 +15,8 @@ export type {
   Conversation,
   ConversationSummary,
   DecisionCapabilities,
+  DecisionGate,
+  DecisionUpdate,
   DecisionCoverage,
   DecisionMode,
   DecisionRecord,
@@ -308,8 +310,20 @@ export function applyDiagramEvent(
       return {
         ...snapshot,
         current_tag: event.tag ?? snapshot.current_tag,
-        reactions: withReaction(reactionId, { status: "running" }),
+        reactions: withReaction(reactionId, {
+          status: "running",
+          invocation_id: typeof event.payload.invocation_id === "string" ? event.payload.invocation_id : null,
+          decision: undefined,
+        }),
       };
+    case "decision_updated": {
+      const decision = event.payload.decision as DiagramSnapshot["reactions"][number]["decision"];
+      if (!decision || typeof decision.invocation_id !== "string") return snapshot;
+      const current = snapshot.reactions.find((reaction) => reaction.id === reactionId);
+      const currentId = current?.invocation_id ?? current?.decision?.invocation_id;
+      if (currentId && currentId !== decision.invocation_id) return snapshot;
+      return { ...snapshot, reactions: withReaction(reactionId, { decision }) };
+    }
     case "reaction_completed":
       return {
         ...snapshot,

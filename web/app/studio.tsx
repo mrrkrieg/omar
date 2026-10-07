@@ -14,6 +14,7 @@ import { PortPanel } from "./port-panel";
 import { Resizer } from "./resizer";
 import { Waiting } from "./waiting";
 import { Suggestions } from "./suggestions";
+import { AutomaticDecisions } from "./automatic-decisions";
 import { WorkflowAdvice } from "./workflow-advice";
 import { fetchDecisionCapabilities } from "./lib/decision-client";
 import {
@@ -1110,6 +1111,7 @@ function StudioWorkspace({ serveUrl = "", historyUrl, designAgent, selectedId, o
             </div>
             ) : null}
           </div>
+          {snapshot ? <AutomaticDecisions reactions={snapshot.reactions} /> : null}
           <DiagramCanvas
             snapshot={snapshot}
             selection={selection}

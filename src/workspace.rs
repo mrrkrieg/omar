@@ -707,11 +707,13 @@ mod tests {
     #[cfg(feature = "decision-support")]
     #[test]
     fn advisory_reader_binds_immutable_bytes_and_refuses_symlinks_traversal_and_large_files() {
-        let (_dir, root, source) = setup();
+        let (_dir, root) = setup();
+        let ws = create(&root);
+        let source = ws.worktree(&root);
         fs::write(source.join("result.md"), "Original 文本").unwrap();
         symlink("result.md", source.join("link.md")).unwrap();
         fs::write(source.join("large.txt"), vec![b'a'; 65 * 1024]).unwrap();
-        let ws = create(&root, &source);
+        ws.snapshot(&root, "Test artifact").unwrap();
         let first = ws.snapshots(&root).unwrap().pop().unwrap();
         fs::write(ws.worktree(&root).join("result.md"), "Edited text").unwrap();
         let second = ws.snapshot(&root, "Edited").unwrap();

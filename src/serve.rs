@@ -250,6 +250,7 @@ struct Workspaces {
 }
 
 struct Context_ {
+    decision_support: crate::config::DecisionSupportConfig,
     history: Arc<Mutex<History>>,
     conversation_id: String,
     omar_dir: PathBuf,
@@ -387,6 +388,7 @@ impl Serve {
         let history = Arc::new(Mutex::new(history));
         let shutdown = Arc::new(AtomicBool::new(false));
         let context = Arc::new(Context_ {
+            decision_support: config.decision_support.clone(),
             history: history.clone(),
             conversation_id: conversation_id.clone(),
             omar_dir: omar_dir.to_path_buf(),
@@ -1617,6 +1619,7 @@ impl Workspaces {
             }
         };
         let context = Arc::new(Context_ {
+            decision_support: self.root.decision_support.clone(),
             history: self.history.clone(),
             conversation_id: id.to_string(),
             omar_dir: self.root.omar_dir.clone(),
@@ -1865,7 +1868,7 @@ fn deliver_to_ea(context: &Arc<Context_>, text: &str, selection: &[String]) -> R
     );
     client.deliver_prompt(
         &session,
-        &mission_control_envelope(text, selection),
+        &format!("{}\n\nWorkflow capability: automatic Jev decisions are {}. When enabled, follow the bounded-gate authoring rules in your system instructions.", mission_control_envelope(text, selection), if cfg!(feature = "decision-support") && context.decision_support.enabled && context.decision_support.automatic_enabled { "enabled" } else { "disabled; keep ordinary reasoning prompts unless the operator explicitly asks to prepare Jev gates" }),
         &DeliveryOptions::default(),
     )?;
     Ok(())
@@ -2637,6 +2640,7 @@ fn spawn_run_thread(
         let outcome = topology::run_topology(
             &bytecode,
             TopologyRunConfig {
+                decision_support: &context.decision_support,
                 ea_id: context.ea_id,
                 omar_dir: &context.omar_dir,
                 generated: &generated,
