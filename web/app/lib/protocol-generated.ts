@@ -110,7 +110,7 @@ lag: number | null,
  * back by the time the run had already spent. `None` until the loop
  * starts its clock, which is after the agents are up.
  */
-clock_origin?: number, 
+clock_origin?: number,
 /**
  * The containers to draw. Empty for a program compiled before instances
  * were carried through, which is how a client tells the difference.
@@ -123,7 +123,11 @@ timers: Array<DiagramTimer>, reactions: Array<DiagramReaction>, edges: Array<Dia
 
 export type DiagramEvent = { protocol_version: number, sequence: number, team: string, tag: DiagramTag | null, kind: DiagramEventKind, payload: Record<string, unknown>, };
 
-export type ProposedDesign = { program: string, inputs: Record<string, unknown>,
+export type ProposedDesign = { program: string,
+/**
+ * Imported schema and source files, relative to the program.
+ */
+files: Record<string, string>, inputs: Record<string, unknown>,
 /**
  * The compiled topology, so the operator sees what they are approving
  * before any run exists.
@@ -145,16 +149,16 @@ export type Conversation = { id: string, title: string, ea_id: number | null, cr
 
 export type ConversationSummary = { id: string, title: string, created_at: number, updated_at: number, message_count: number, ea_id: number | null, busy: boolean, run: RunRecord | null, };
 
-export type RunRecord = { run_id: string, team: string, status: RunStatus, diagram_address: string | null, started_at: number, finished_at: number | null, error: string | null, 
+export type RunRecord = { run_id: string, team: string, status: RunStatus, diagram_address: string | null, started_at: number, finished_at: number | null, error: string | null,
 /**
  * Input ports the run was admitted with, so its timeline can be
  * projected again later from the same starting point.
  */
-present?: Array<string>, 
+present?: Array<string>,
 /**
  * Output ports a finished run ended with.
  */
-outputs?: Record<string, unknown>, 
+outputs?: Record<string, unknown>,
 /**
  * State variables a finished run ended with.
  */

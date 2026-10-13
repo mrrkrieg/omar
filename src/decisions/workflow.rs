@@ -358,7 +358,8 @@ mod tests {
                 .join(format!("{}.omar", template.id.replace('-', "_")));
             std::fs::write(&file, &template.program).unwrap();
             let state =
-                crate::topology::verify(&crate::topology::load_program(&file).unwrap()).unwrap();
+                crate::topology::verify(&crate::topology::load_staged_program(&file).unwrap())
+                    .unwrap();
             let snapshot = crate::diagram::DiagramSnapshot::from_vm_state(&state);
             assert!(state.timers.is_empty(), "starter workflows must be finite");
             assert_eq!(state.reactions.len(), 3);
@@ -379,7 +380,8 @@ mod tests {
                 .replace("$(draft)", "$(brief)");
             std::fs::write(&file, omitted).unwrap();
             let state =
-                crate::topology::verify(&crate::topology::load_program(&file).unwrap()).unwrap();
+                crate::topology::verify(&crate::topology::load_staged_program(&file).unwrap())
+                    .unwrap();
             let snapshot = crate::diagram::DiagramSnapshot::from_vm_state(&state);
             assert!(scenario_failures(&snapshot, &inputs)
                 .iter()

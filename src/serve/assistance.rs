@@ -21,6 +21,8 @@ enum Payload {
     },
     Proposal {
         program: String,
+        #[serde(default)]
+        files: BTreeMap<String, String>,
         inputs: BTreeMap<String, Value>,
         scenario_id: String,
         scenario_version: String,
@@ -171,6 +173,7 @@ fn assemble(context: &Context_, request: Register) -> Result<AdviceInput> {
         }
         Payload::Proposal {
             program,
+            files,
             inputs,
             scenario_id,
             scenario_version,
@@ -185,14 +188,17 @@ fn assemble(context: &Context_, request: Register) -> Result<AdviceInput> {
                 "unknown scenario or version"
             );
             anyhow::ensure!(
-                program.len() <= 16 * 1024 && serde_json::to_vec(&inputs)?.len() <= 16 * 1024,
+                program.len() <= 16 * 1024
+                    && serde_json::to_vec(&inputs)?.len() <= 16 * 1024
+                    && serde_json::to_vec(&files)?.len() <= 64 * 1024,
                 "proposal is too large"
             );
             subject.kind = SubjectKind::Proposal;
-            subject.revision = digest(&serde_json::to_string(&(&program, &inputs))?);
+            subject.revision = digest(&serde_json::to_string(&(&program, &inputs, &files))?);
             // The compiler runs here; supplied browser previews/diagnostics are never trusted.
-            let (status, checked) =
-                check_program(&serde_json::to_vec(&json!({"program": program}))?);
+            let (status, checked) = check_program(&serde_json::to_vec(
+                &json!({"program": program, "files": files}),
+            )?);
             if status != 200 || checked["ok"] != true {
                 failures.push(format!(
                     "Compiler did not accept this proposal: {}",
@@ -434,6 +440,36 @@ mod tests {
             register(context, &serde_json::to_vec(&unconfirmed).unwrap()).0,
             400
         );
+    }
+
+    #[test]
+    #[ignore = "requires omarc"]
+    fn proposal_advice_compiles_schema_bundle_and_invalidates_changed_files() {
+        let temp = tempfile::tempdir().unwrap();
+        let server = server(temp.path());
+        let program = include_str!("../../examples/jev-review.omar");
+        let id = Uuid::new_v4().to_string();
+        let mut request = json!({"id":id, "profile_id":"scenario-coverage-v1", "confirmed":true,
+            "payload":{"kind":"proposal", "program":program,
+                "files":{"schemas/jev-decision.json":include_str!("../../examples/schemas/jev-decision.json")},
+                "inputs":{"review.request":"Complete request"}, "scenario_id":"review-actual-output", "scenario_version":"1"}});
+        let (status, first) = register(&server.context, &serde_json::to_vec(&request).unwrap());
+        assert_eq!(status, 200, "{first}");
+        assert!(!first["input"]["deterministic_failures"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|failure| failure
+                .as_str()
+                .unwrap()
+                .contains("Compiler did not accept")));
+        request["payload"]["files"]["schemas/jev-decision.json"] =
+            json!("{\"type\":\"string\",\"enum\":[\"continue\",\"stop\",\"defer\",\"other\"]}");
+        let (status, second) = register(&server.context, &serde_json::to_vec(&request).unwrap());
+        assert_eq!(status, 200, "{second}");
+        assert_ne!(first["subject"]["revision"], second["subject"]["revision"]);
+        assert_ne!(first["subject"]["sha256"], second["subject"]["sha256"]);
+        assert!(server.context.runs.lock().unwrap().is_empty());
     }
 
     #[test]

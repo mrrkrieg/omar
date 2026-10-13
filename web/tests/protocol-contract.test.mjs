@@ -14,7 +14,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import { startFakeServe, INVALID_MARKER } from "./fake-serve.mjs";
-import { RUN_STATUSES, assertRunRecord, isRunFinished, parseInputValue, applyDiagramEvent } from "../app/lib/protocol.ts";
+import { RUN_STATUSES, assertRunRecord, isRunFinished, parseInputValue, applyDiagramEvent, assertChatMessage } from "../app/lib/protocol.ts";
 
 const golden = JSON.parse(
   await readFile(new URL("./fixtures/diagram-snapshot.v1.json", import.meta.url), "utf8"),
@@ -330,4 +330,17 @@ test("automatic decisions survive terminal events and reject stale invocation up
   assert.equal(finished.reactions[0].decision.reason, decision.reason);
   const next = applyDiagramEvent(finished, event("reaction_started", {reaction:reaction.id, invocation_id:"next"}));
   assert.equal(next.reactions[0].decision, undefined);
+});
+
+
+test("builder schema bundles survive chat normalization and old proposals default to no files", () => {
+  const message = { sequence: 1, role: "assistant", text: "Schema workflow", progress: false,
+    design: { program: 'type Decision from "./schemas/decision.json"', files: { "schemas/decision.json": '{"type":"string","enum":["continue","defer"]}' }, inputs: {}, preview: golden } };
+  assert.deepEqual(assertChatMessage(message).design.files, message.design.files);
+  const legacy = structuredClone(message);
+  delete legacy.design.files;
+  assert.deepEqual(assertChatMessage(legacy).design.files, {});
+  for (const files of [[], { "schemas/decision.json": 42 }]) {
+    assert.throws(() => assertChatMessage({ ...message, design: { ...message.design, files } }), /files must map/);
+  }
 });

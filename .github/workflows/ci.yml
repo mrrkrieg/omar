@@ -161,6 +161,10 @@ jobs:
       - run: |
           cargo test --bin omar --features decision-support protocol::
       - run: cargo test --bin omar --features decision-support starter_workflows_compile -- --ignored
+      - run: cargo test --bin omar --features decision-support builder_proposals_compile -- --ignored
+      - run: cargo test --bin omar --features decision-support proposal_advice_compiles -- --ignored
+      - run: cargo build --bin omar --features decision-support
+      - run: python3 tests/ci/jev_backend.py -v
       # Live evaluation is never selected here and no provider secret is set.
 
   codex-shared-history:
@@ -328,6 +332,9 @@ jobs:
             tests/ci/direct_run.omar --input run.request=hello --replace --wait)
           echo "$output"
           grep -Fq 'Output run.result = "hello"' <<<"$output"
+
+      - name: Verify registered Jev backend (mock HTTP, no API key)
+        run: python3 tests/ci/jev_backend.py -v
 
       - name: Verify agent invocations use side-channel delivery
         env:

@@ -238,6 +238,10 @@ pub struct ChatMessage {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct ProposedDesign {
     pub program: String,
+    /// Imported schema and source files, relative to the program.
+    #[serde(default)]
+    #[ts(type = "Record<string, string>")]
+    pub files: BTreeMap<String, String>,
     #[serde(default)]
     #[ts(type = "Record<string, unknown>")]
     pub inputs: BTreeMap<String, Value>,
@@ -258,6 +262,8 @@ struct AgentReply {
 struct AgentProposal {
     token: String,
     program: String,
+    #[serde(default)]
+    files: BTreeMap<String, String>,
     summary: String,
     #[serde(default)]
     inputs: BTreeMap<String, Value>,
@@ -2151,7 +2157,7 @@ fn mission_control_envelope(text: &str, selection: &[String]) -> String {
          print here reaches nobody. Every question, status update, and answer must go \
          through `omar_reply`.\n\
          To offer a workflow, call the MCP tool `omar_propose_design` with a complete \
-         OMAR program. The operator approves and runs it; you do not.\n\n\
+         OMAR program and its imported files in the `files` map (relative path to UTF-8 contents). The operator approves and runs it; you do not.\n\n\
          {selected}{text}"
     )
 }
@@ -2206,7 +2212,7 @@ fn agent_proposal(context: &Arc<Context_>, body: &[u8]) -> (u16, Value) {
     // Compile before publishing. The operator never sees an unbuildable
     // program, and the EA gets the compiler's diagnostic back as its tool
     // result, so it can correct the program itself.
-    let state = match compile_preview(context, &proposal.program) {
+    let state = match compile_preview(&proposal.program, &proposal.files) {
         Ok(state) => state,
         Err(error) => return (400, json!({"error": format!("{error:#}")})),
     };
@@ -2216,6 +2222,7 @@ fn agent_proposal(context: &Arc<Context_>, body: &[u8]) -> (u16, Value) {
         false,
         Some(ProposedDesign {
             program: proposal.program,
+            files: proposal.files,
             inputs: proposal.inputs,
             preview: crate::diagram::DiagramSnapshot::from_vm_state(&state),
         }),
@@ -2225,15 +2232,12 @@ fn agent_proposal(context: &Arc<Context_>, body: &[u8]) -> (u16, Value) {
     (202, json!({"status": "proposed"}))
 }
 
-fn compile_preview(context: &Arc<Context_>, program: &str) -> Result<VmState> {
-    let dir = crate::ea::ea_state_dir(context.ea_id, &context.omar_dir).join("proposals");
-    fs::create_dir_all(&dir)?;
-    let path = dir.join(format!("{}.omar", Uuid::new_v4()));
-    fs::write(&path, program)?;
-    let bytecode = topology::load_staged_program(&path)?;
-    let state = topology::verify(&bytecode)?;
-    let _ = fs::remove_file(&path);
-    Ok(state)
+fn compile_preview(program: &str, files: &BTreeMap<String, String>) -> Result<VmState> {
+    let staged =
+        stage_program(program, None, files).map_err(|(_, body)| anyhow::anyhow!("{}", body))?;
+    let outcome = topology::load_staged_program(&staged.path)
+        .and_then(|bytecode| topology::verify(&bytecode));
+    staged.finish(outcome).map_err(anyhow::Error::msg)
 }
 
 fn stream_chat(mut stream: TcpStream, context: &Arc<Context_>, origin: Option<&str>) -> Result<()> {
@@ -3953,6 +3957,42 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires omarc"]
+    fn builder_proposals_compile_and_preserve_imported_schema_files() {
+        let server = test_server();
+        let program = "type Decision from \"./schemas/decision.json\"\nteam Review[reviewer : Jev] { input request : string output out : Decision prompt reviewer(request) -> out \"Choose.\" }\nmain SchemaProposal { review = Review() }";
+        let files = BTreeMap::from([(
+            "schemas/decision.json".to_string(),
+            "{\"type\":\"string\",\"enum\":[\"continue\",\"stop\",\"defer\"]}".to_string(),
+        )]);
+        let token = server.context.agent_token.lock().unwrap().clone();
+        let proposal = json!({"token": token, "program": program, "files": files, "inputs":{"review.request":"Complete input"}, "summary":"Schema flow"});
+        let (status, response) =
+            agent_proposal(&server.context, &serde_json::to_vec(&proposal).unwrap());
+        assert_eq!(status, 202, "{response}");
+        let history = server.context.history.lock().unwrap();
+        let conversation = history.conversation(&server.context.conversation_id);
+        let design = conversation
+            .messages
+            .last()
+            .unwrap()
+            .design
+            .as_ref()
+            .unwrap();
+        assert_eq!(design.files, files);
+        assert_eq!(design.preview.team, "SchemaProposal");
+        drop(history);
+        assert!(compile_preview(program, &BTreeMap::new()).is_err());
+        let escaped = BTreeMap::from([("../decision.json".into(), "{}".into())]);
+        assert!(compile_preview(program, &escaped).is_err());
+        let invalid = BTreeMap::from([(
+            "schemas/decision.json".into(),
+            "{\"type\":\"object\"}".into(),
+        )]);
+        assert!(compile_preview(program, &invalid).is_err());
+    }
+
+    #[test]
     fn workspace_routes_scope_files_to_the_chat_and_reject_cross_site_requests() {
         let server = test_server();
         let root = &server.context.omar_dir;
@@ -4477,6 +4517,7 @@ while True:
             .unwrap();
         let proposal = ProposedDesign {
             program: include_str!("../web/tests/fixtures/review-flow.omar").into(),
+            files: BTreeMap::new(),
             inputs: BTreeMap::from([("flow.request".into(), json!("release evidence"))]),
             preview: serde_json::from_str(include_str!(
                 "../web/tests/fixtures/diagram-snapshot.v1.json"

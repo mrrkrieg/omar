@@ -12,8 +12,8 @@ type Kind = "draft" | "proposal" | "artifact";
 const profiles: Record<Kind, string> = { draft: "template-fit-v1", proposal: "scenario-coverage-v1", artifact: "artifact-requirement-v1" };
 
 /** Opening or editing this panel never requests a provider evaluation. */
-export function WorkflowAdvice({ serveUrl, program, inputs, canSelect, onSelect }: {
-  serveUrl: string; program: string; inputs: Record<string, unknown>; canSelect: boolean;
+export function WorkflowAdvice({ serveUrl, program, files, inputs, canSelect, onSelect }: {
+  serveUrl: string; program: string; files?: Record<string, string>; inputs: Record<string, unknown>; canSelect: boolean;
   onSelect: (design: ProposedDesign) => void;
 }) {
   const [kind, setKind] = useState<Kind>("draft");
@@ -34,7 +34,7 @@ export function WorkflowAdvice({ serveUrl, program, inputs, canSelect, onSelect 
   const [error, setError] = useState("");
   const [dismissed, setDismissed] = useState<string[]>([]);
   const ids = useRef<Partial<Record<Kind, string>>>({});
-  const key = JSON.stringify(kind === "draft" ? [kind, brief] : kind === "proposal" ? [kind, program, inputs] : [kind, workspace, snapshot, path, range, requirement, requireComplete]);
+  const key = JSON.stringify(kind === "draft" ? [kind, brief] : kind === "proposal" ? [kind, program, inputs, files ?? {}] : [kind, workspace, snapshot, path, range, requirement, requireComplete]);
   const stale = !!state && preparedKey !== key;
   const pending = state?.records.some((r) => r.status === "queued" || r.status === "evaluating");
 
@@ -59,7 +59,7 @@ export function WorkflowAdvice({ serveUrl, program, inputs, canSelect, onSelect 
   async function prepare() {
     const id = ids.current[kind] ?? (ids.current[kind] = crypto.randomUUID());
     const payload: AdvicePayload = kind === "draft" ? { kind, text: brief }
-      : kind === "proposal" ? { kind, program, inputs, scenario_id: "review-actual-output", scenario_version: "1" }
+      : kind === "proposal" ? { kind, program, files: files ?? {}, inputs, scenario_id: "review-actual-output", scenario_version: "1" }
       : { kind, workspace_id: workspace, snapshot_id: snapshot, path, ...range };
     const criterion = kind === "artifact" ? { id: "operator-requirement", version: "1", text: requirement, requires_complete: requireComplete } : undefined;
     const next = await registerAdvice(serveUrl, id, profiles[kind], payload, criterion);
@@ -69,7 +69,7 @@ export function WorkflowAdvice({ serveUrl, program, inputs, canSelect, onSelect 
   async function selectTemplate(template: WorkflowTemplate) {
     const checked = await checkProgram(serveUrl, template.program, `${template.id.replaceAll("-", "_")}.omar`);
     if (!checked.ok || !checked.preview) throw new Error(checked.errors?.join("\n") || "The template could not be compiled.");
-    onSelect({ program: template.program, inputs: { "flow.brief": brief }, preview: checked.preview });
+    onSelect({ program: template.program, files: {}, inputs: { "flow.brief": brief }, preview: checked.preview });
   }
 
   const recommendation = !stale ? state?.records.findLast((r) => r.status === "suggested" && r.input.profile_id === "template-fit-v1" && !dismissed.includes(r.decision_id))?.result?.outcome : undefined;

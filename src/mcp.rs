@@ -2619,6 +2619,7 @@ fn ea_tool_definitions() -> Vec<Value> {
                 "type":"object",
                 "properties":{
                     "program":{"type":"string","description":"Complete .omar source"},
+                    "files":{"type":"object","additionalProperties":{"type":"string"},"description":"Imported files keyed by their relative paths, e.g. schemas/decision.json. Include the complete UTF-8 contents of every imported schema or source file."},
                     "summary":{"type":"string","description":"One or two sentences on what it does"},
                     "inputs":{"type":"object","description":"Values for the program's declared input ports"}
                 },

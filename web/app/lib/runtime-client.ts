@@ -212,8 +212,7 @@ export async function checkProgram(
     /**
      * Files the program imports, by the relative path it imports them under.
      * The daemon stages the program alone, so what it imports has to come
-     * with it. The editor has no second file to send yet; a caller that has
-     * one passes it here.
+     * with it. Builder proposals carry their imported schemas here.
      */
     files?: Record<string, string>;
   } = {},

@@ -65,6 +65,13 @@ export async function startFakeServe({
     if (request.method === "GET" && url.pathname === "/health") {
       return json(response, 200, { status: "ok", protocol_version: 1 });
     }
+    if (request.method === "GET" && url.pathname === "/v1/assist/capabilities") {
+      return json(response, 200, {
+        schema_version: 1, available: true, configured: false, enabled: false,
+        key_present: false, model: "jev-1.13.0", modes: ["off", "shadow", "suggest"],
+        profiles: [], max_requests_per_run: 100, max_source_bytes: 65536,
+      });
+    }
     if (request.method === "POST" && url.pathname === "/v1/programs/check") {
       return readBody(request).then((body) => checkProgram(body, response));
     }
@@ -333,6 +340,7 @@ export async function startFakeServe({
           preview.team = String(payload.program ?? "").match(/\bmain\s+([A-Za-z_]\w*)/)?.[1] ?? preview.team;
           publishChat("assistant", String(payload.summary ?? ""), {
             program: String(payload.program ?? ""),
+            files: payload.files ?? {},
             inputs: payload.inputs ?? {},
             preview,
           }, false, [], chat);

@@ -3,7 +3,7 @@ import { normalizeRuntimeUrl } from "./runtime-client";
 
 export type AdvicePayload =
   | { kind: "draft"; text: string }
-  | { kind: "proposal"; program: string; inputs: Record<string, unknown>; scenario_id: string; scenario_version: string }
+  | { kind: "proposal"; program: string; files?: Record<string, string>; inputs: Record<string, unknown>; scenario_id: string; scenario_version: string }
   | { kind: "artifact"; workspace_id: string; snapshot_id: string; path: string; start: number; end: number };
 
 async function request<T>(base: string, path: string, body?: unknown): Promise<T> {

@@ -739,6 +739,7 @@ function StudioWorkspace({ serveUrl = "", historyUrl, designAgent, selectedId, o
       const record = await startRun(serveUrl, {
         program: source,
         inputs: design.inputs,
+        files: design.files,
         conversation_id: conversationIdRef.current ?? undefined,
         keep_workspaces: options.keepWorkspaces,
         checkpoint_period: options.checkpointPeriod,
@@ -891,6 +892,7 @@ function StudioWorkspace({ serveUrl = "", historyUrl, designAgent, selectedId, o
         source,
         filename,
         {
+          files: design?.files,
           timeline: true,
           present: presentKey ? presentKey.split("\u0000") : [],
         },
@@ -925,7 +927,7 @@ function StudioWorkspace({ serveUrl = "", historyUrl, designAgent, selectedId, o
       clearTimeout(timer);
       abort.abort();
     };
-  }, [source, filename, serveUrl, canRun, presentKey, switchingChat]);
+  }, [source, filename, design?.files, serveUrl, canRun, presentKey, switchingChat]);
 
   const isDeployed = run !== null;
   // The daemon's own word for it. Every terminal status replaces it, so the
@@ -1151,7 +1153,7 @@ function StudioWorkspace({ serveUrl = "", historyUrl, designAgent, selectedId, o
             {phase === "spawning" ? <Waiting label="Starting the run" /> : null}
           </div>
 
-          {decisionCapabilities?.enabled && decisionCapabilities.profiles.includes("scenario-coverage-v1") && !isDemo ? <WorkflowAdvice serveUrl={serveUrl} program={source} inputs={design?.inputs ?? {}} canSelect={phase !== "spawning" && phase !== "observing"} onSelect={(chosen) => {
+          {decisionCapabilities?.enabled && decisionCapabilities.profiles.includes("scenario-coverage-v1") && !isDemo ? <WorkflowAdvice serveUrl={serveUrl} program={source} files={design?.files} inputs={design?.inputs ?? {}} canSelect={phase !== "spawning" && phase !== "observing"} onSelect={(chosen) => {
             setDesign(chosen); setSource(chosen.program); setFilename(`${chosen.preview.team}.omar`); setSnapshot(chosen.preview); setPhase("review");
           }} /> : null}
           {error ? <div className="connection-error">{error}</div> : null}
@@ -1394,6 +1396,18 @@ function StudioWorkspace({ serveUrl = "", historyUrl, designAgent, selectedId, o
           </div>
 
           {tab === "source" ? (
+            <>
+            {design && Object.keys(design.files ?? {}).length > 0 ? (
+              <details className="imported-files">
+                <summary>Imported files ({Object.keys(design.files).length})</summary>
+                {Object.entries(design.files).map(([path, contents]) => (
+                  <details key={path}>
+                    <summary>{path}</summary>
+                    <pre>{contents}</pre>
+                  </details>
+                ))}
+              </details>
+            ) : null}
             <OmarEditor
               source={source}
               filename={filename}
@@ -1403,6 +1417,7 @@ function StudioWorkspace({ serveUrl = "", historyUrl, designAgent, selectedId, o
               onSourceChange={setSource}
               onFilenameChange={setFilename}
             />
+            </>
           ) : tab === "suggestions" && run && decisionCapabilities?.configured ? (
             <Suggestions serveUrl={serveUrl} runId={run.run_id} capabilities={decisionCapabilities} />
           ) : (

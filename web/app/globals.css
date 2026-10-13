@@ -1549,8 +1549,14 @@ h2 {
 @media (max-width: 760px) {
   /* Still fills the viewport exactly — stacked rows rather than columns. */
   .workspace {
-    grid-template-columns: 1fr;
+    /* Desktop split widths are inline; the mobile flow needs one column. */
+    grid-template-columns: minmax(0, 1fr) !important;
     grid-template-rows: minmax(0, 1fr) minmax(0, 1.2fr);
+  }
+
+  .workspace > .resizer,
+  .workspace > .resizer-handle {
+    display: none;
   }
 
   .builder-panel {
@@ -2644,3 +2650,7 @@ h2 {
 .automatic-decisions summary span:first-child { font-weight: 600; }
 .automatic-decisions p { margin: 8px 0; }
 .automatic-decisions ul { padding-left: 20px; }
+
+.imported-files { padding: 0.5rem 0.75rem; max-height: 35%; overflow: auto; border-bottom: 1px solid var(--border); }
+.imported-files summary { cursor: pointer; }
+.imported-files pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.75rem; }

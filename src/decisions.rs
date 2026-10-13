@@ -190,13 +190,11 @@ mod enabled {
     use super::*;
     use crate::config::DecisionSupportConfig;
     use anyhow::{anyhow, Context, Result};
-    use reqwest::blocking::Client;
-    use reqwest::redirect::Policy;
     use serde_json::{json, Value};
     use sha2::{Digest, Sha256};
     use std::fs::{self, File, OpenOptions};
     use std::io::Write;
-    use std::io::{BufRead, BufReader, Read};
+    use std::io::{BufRead, BufReader};
     use std::net::{SocketAddr, TcpStream};
     use std::path::{Path, PathBuf};
     use std::sync::{mpsc, Arc, Condvar, Mutex};
@@ -292,58 +290,29 @@ mod enabled {
     }
 
     struct TypeSafeProvider {
-        client: Client,
-        endpoint: String,
+        timeout: Duration,
     }
 
     impl TypeSafeProvider {
         fn new(config: &DecisionSupportConfig) -> Result<Self> {
-            if config.provider != "typesafe" || config.model != JEV_MODEL {
-                anyhow::bail!("the review-owner-v1 profile requires TypeSafe Jev 1.13.0")
-            }
-            let client = Client::builder()
-                .timeout(Duration::from_millis(
-                    config.request_timeout_ms.clamp(1, 3_000),
-                ))
-                .redirect(Policy::none())
-                .build()
-                .context("build Jev client")?;
+            anyhow::ensure!(
+                config.provider == "typesafe" && config.model == JEV_MODEL,
+                "decision profiles require TypeSafe Jev 1.13.0"
+            );
             Ok(Self {
-                client,
-                endpoint: "https://api.typesafe.ai/v1/systemone".to_string(),
+                timeout: Duration::from_millis(config.request_timeout_ms.clamp(1, 3_000)),
             })
         }
     }
 
     impl Provider for TypeSafeProvider {
         fn evaluate(&self, request: &Value) -> Result<ProviderResponse> {
-            let key = std::env::var("TYPESAFE_API_KEY")
-                .map_err(|_| anyhow!("TYPESAFE_API_KEY is not configured"))?;
-            let mut response = self
-                .client
-                .post(&self.endpoint)
-                .bearer_auth(key)
-                .json(request)
-                .send()
-                .context("call TypeSafe SystemOne")?
-                .error_for_status()
-                .context("TypeSafe SystemOne rejected request")?;
-            if response
-                .content_length()
-                .is_some_and(|length| length > MAX_PROVIDER_RESPONSE_BYTES as u64)
-            {
-                anyhow::bail!("TypeSafe SystemOne response exceeded the advisory bound")
-            }
-            let mut body = Vec::with_capacity(MAX_PROVIDER_RESPONSE_BYTES);
-            response
-                .by_ref()
-                .take((MAX_PROVIDER_RESPONSE_BYTES + 1) as u64)
-                .read_to_end(&mut body)
-                .context("read TypeSafe SystemOne response")?;
-            if body.len() > MAX_PROVIDER_RESPONSE_BYTES {
-                anyhow::bail!("TypeSafe SystemOne response exceeded the advisory bound")
-            }
-            serde_json::from_slice(&body).context("parse TypeSafe SystemOne response")
+            let response = crate::backend::jev_transport::evaluate(
+                request,
+                self.timeout,
+                MAX_PROVIDER_RESPONSE_BYTES,
+            )?;
+            serde_json::from_value(response).context("parse TypeSafe SystemOne response")
         }
     }
 

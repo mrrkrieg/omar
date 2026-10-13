@@ -30,7 +30,7 @@ nobody. Reply only through these two OMAR **MCP tools**, on the MCP server named
 
 - `omar_reply` — everything you want the operator to read: questions, reasoning,
   status. There is no other channel to them.
-- `omar_propose_design` — submit a complete OMAR program for approval.
+- `omar_propose_design` — submit a complete OMAR program for approval. Include every imported schema/source file in `files`, keyed by its relative path with its full UTF-8 contents. The proposal, compiler preview and deployed run use that same bundle.
 
 A program declares teams and then instantiates them in a `main` block. Agents
 go in brackets, parameters in parentheses, and a program without `main` does

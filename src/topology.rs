@@ -2032,6 +2032,31 @@ struct DispatchExecutor<'a, E: ReactionExecutor> {
 
 impl<E: ReactionExecutor> ReactionExecutor for DispatchExecutor<'_, E> {
     fn invoke(&self, invocation: InvocationSpec) -> Result<BTreeMap<String, Value>> {
+        if let Some(backend) = self
+            .state
+            .agents
+            .get(&invocation.agent)
+            .and_then(|agent| crate::backend::by_name(&agent.backend))
+            .filter(|backend| backend.topology_only())
+        {
+            let rendered = render_prompt(&invocation.prompt, &invocation.trigger_values)?;
+            let writes = backend.invoke_topology(&crate::backend::TopologyInvocation {
+                effects: &invocation.allowed_effects,
+                triggers: &invocation.trigger_values,
+                instructions: &rendered,
+                timeout: invocation.within.unwrap_or(self.timeout),
+            })?;
+            validate_contract(&invocation.contract, &writes)?;
+            for (port, value) in &writes {
+                let port_type = self
+                    .state
+                    .ports
+                    .get(port)
+                    .context("backend wrote an unknown port")?;
+                validate_value(&port_type.ty, value)?;
+            }
+            return Ok(writes);
+        }
         if let Some(code) = &self.code {
             if code.handles(&invocation.reaction_id) {
                 let deadline = invocation.within.unwrap_or(self.timeout);
@@ -2627,7 +2652,7 @@ fn launch(
     let planned_sessions: BTreeMap<String, String> = state
         .agents
         .iter()
-        .filter(|(_, agent)| !is_web_backend(&agent.backend))
+        .filter(|(_, agent)| needs_agent_process(&agent.backend))
         .map(|(name, _)| (name.clone(), client.session_for(name)))
         .collect();
     let record = Arc::new(Mutex::new(deploy::DeploymentRecord::create(
@@ -3057,7 +3082,7 @@ fn spawn_topology_agents(
         // A web agent is not spawned. There is no command to resolve, no pane
         // to put it in, and no readiness to wait for — the agent exists as a
         // name in the topology and an inbox in the registry.
-        if is_web_backend(&agent.backend) {
+        if !needs_agent_process(&agent.backend) {
             continue;
         }
         let session = client.session_for(name);
@@ -3121,7 +3146,7 @@ fn spawn_topology_agents(
     }
 
     for (name, agent) in &state.agents {
-        if is_web_backend(&agent.backend) {
+        if !needs_agent_process(&agent.backend) {
             continue;
         }
         let Some(backend) = crate::backend::by_name(canonical_backend(&agent.backend)) else {
@@ -4028,7 +4053,7 @@ fn run_event_loop_controlled<E: ReactionExecutor>(
                     .collect::<Result<Vec<_>>>()
             });
 
-            if stop_now()
+            if deployment_dir.is_some_and(deploy::stop_requested)
                 && state
                     .reactions
                     .values()
@@ -4352,12 +4377,13 @@ fn require_identifier(kind: &str, value: &str) -> Result<()> {
     }
 }
 
-/// Whether a backend is answered by a web client rather than a spawned process.
-///
-/// Nothing is spawned for one, so it has no pane, no readiness marker and no
-/// command to resolve — the difference has to be known before any of that is
-/// attempted. It names what answers the reaction, not how the bytes get there:
-/// the transport is the panel's business, not the program's.
+/// Whether this agent needs a launched coding-agent process.
+fn needs_agent_process(backend: &str) -> bool {
+    !is_web_backend(backend)
+        && !crate::backend::by_name(backend).is_some_and(|backend| backend.topology_only())
+}
+
+/// Web agents are answered by a client through the invocation registry.
 fn is_web_backend(backend: &str) -> bool {
     canonical_backend(backend) == "web"
 }
@@ -5651,6 +5677,16 @@ mod tests {
         assert!(truncated);
         assert_eq!(steps.len(), 8);
         assert_eq!(steps[0].timestamp, 0);
+    }
+
+    #[test]
+    fn direct_topology_backends_have_no_agent_process() {
+        assert!(!needs_agent_process("Jev"));
+        assert!(!needs_agent_process(" JeV "));
+        assert!(!needs_agent_process("Web"));
+        assert!(needs_agent_process("Codex"));
+        assert!(needs_agent_process("ClaudeCode"));
+        assert!(needs_agent_process("Stub"));
     }
 
     #[test]
@@ -8066,6 +8102,74 @@ mod tests {
                 outputs.contains_key("next.repaired"),
                 choice == "not_satisfied"
             );
+        }
+    }
+
+    #[test]
+    fn automatic_gate_confidence_controls_the_complete_downstream_flow() {
+        for (confidence, probability, sufficiency, available, reasoning, branch) in [
+            (0.95, 0.95, 0.95, true, false, "next.continue"),
+            (0.99, 0.99, 0.99, true, false, "next.continue"),
+            (0.949999, 0.99, 0.99, true, true, "next.repair"),
+            (0.99, 0.949999, 0.99, true, true, "next.repair"),
+            (0.99, 0.99, 0.949999, true, true, "next.repair"),
+            (0.99, 0.99, 0.99, false, true, "next.repair"),
+        ] {
+            let state = verify(&automatic_gate_program()).unwrap();
+            let temp = tempfile::tempdir().unwrap();
+            let result = crate::decisions::workflow::AdviceResult {
+                outcome: "appears_satisfied".into(),
+                message: "Verified founder".into(),
+                confidence,
+                selected_probability: probability,
+                sufficient_context: sufficiency,
+                evidence_id: Some("output".into()),
+                model: crate::backend::jev_transport::MODEL.into(),
+                input_tokens: None,
+                probabilities: BTreeMap::from([("appears_satisfied".into(), probability)]),
+            };
+            let runtime = crate::decisions::automatic::fixture_runtime(
+                temp.path(),
+                available.then_some(result),
+            );
+            let executor = DispatchExecutor {
+                decisions: Some((&runtime, &NoopTopologyObserver)),
+                state: &state,
+                code: None,
+                timeout: Duration::from_secs(10),
+                workspace_dirs: BTreeMap::new(),
+                agents: GateAgent {
+                    outcome: "not_satisfied",
+                    calls: Mutex::new(vec![]),
+                    stop: None,
+                },
+            };
+            let original = json!("A founder announces a launch. ✅ Literal $(data) must survive.");
+            let outputs = run_event_loop(
+                &state,
+                BTreeMap::from([("gate.draft".into(), original.clone())]),
+                &executor,
+            )
+            .unwrap();
+            let expected = if reasoning {
+                vec!["gate.check", branch]
+            } else {
+                vec![branch]
+            };
+            assert_eq!(*executor.agents.calls.lock().unwrap(), expected);
+            assert_eq!(
+                outputs[if reasoning {
+                    "next.repaired"
+                } else {
+                    "next.continued"
+                }],
+                original
+            );
+            assert!(!outputs.contains_key(if reasoning {
+                "next.continued"
+            } else {
+                "next.repaired"
+            }));
         }
     }
 
