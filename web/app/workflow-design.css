@@ -26,7 +26,7 @@ html, body { font-family: "DM Sans", ui-sans-serif, system-ui, sans-serif; }
 button, input, textarea, select { font: inherit; }
 button { transition: background 140ms ease, border-color 140ms ease; }
 button:focus-visible, select:focus-visible { outline: 2px solid #9168ff; outline-offset: 3px; }
-.chat-history { flex-basis: 286px; padding: 18px 14px 14px; background: #101014; }
+.chat-history { flex-basis: 286px; padding: 18px 14px 14px; background: var(--panel); }
 .chat-history header { height: 42px; margin-bottom: 0; }
 .brand-lockup { display: flex; gap: 2px; align-items: center; }
 .brand-lockup strong { font-size: 14px; letter-spacing: -.01em; }
@@ -70,8 +70,8 @@ button:focus-visible, select:focus-visible { outline: 2px solid #9168ff; outline
 .chat-history .status-failed { color: #ed8882; }
 .chat-history .status-stopped, .chat-history .status-stopping { color: #dfb465; }
 .chat-history .status-completed { color: #64cd9b; }
-.history-rail { background: #101014; }
-.builder-panel { background: #121216; border: 0; padding-top: 0; }
+.history-rail { background: var(--panel); }
+.builder-panel { background: var(--panel-2); border: 0; padding-top: 0; }
 .conversation-header { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: 12px; min-height: 68px; padding: 12px 18px; border-bottom: 1px solid var(--line); }
 .conversation-crumb { display: flex; min-width: 0; align-items: center; gap: 8px; color: #8c8595; font-size: 11px; }
 .conversation-crumb svg { flex-shrink: 0; }
@@ -91,7 +91,7 @@ button:focus-visible, select:focus-visible { outline: 2px solid #9168ff; outline
 .message-author { margin-bottom: 7px; color: #f0edf3; font-size: 11px; font-weight: 650; }
 .message p, .message-body { color: #c9c5ce; font-size: 13px; line-height: 1.75; }
 .message.progress .message-author { color: var(--muted); }
-.prompt-box { flex: 0 0 auto; margin: 12px 18px 0; padding: 15px 10px 10px; border-color: #302e38; border-radius: 14px; background: #19191e; box-shadow: 0 10px 30px #00000012; }
+.prompt-box { flex: 0 0 auto; margin: 12px 18px 0; padding: 15px 10px 10px; border-color: var(--line); border-radius: 14px; background: var(--panel); box-shadow: 0 10px 30px #00000012; }
 .prompt-box textarea { min-height: 64px; max-height: 180px; padding: 0 6px; color: #ded9e5; font-size: 12px; line-height: 1.6; }
 .prompt-box textarea::placeholder { color: #97909e; }
 .prompt-box > div { padding-top: 8px; }
@@ -104,13 +104,13 @@ button:focus-visible, select:focus-visible { outline: 2px solid #9168ff; outline
 .builder-panel.solo .messages { max-width: 780px; }
 .builder-panel.solo .messages > * { width: auto; }
 .builder-panel.solo .conversation-crumb strong { max-width: 440px; }
-.resizer { width: 6px; background: #19191e; }
-.resizer i { background: #2d2b33; }
-.resizer-handle { width: 18px; background: #f0f0ed; color: #827493; }
-.diagram-panel { background: linear-gradient(#ddddd730 1px, transparent 1px), linear-gradient(90deg,#ddddd730 1px, transparent 1px), var(--paper); background-size: 20px 20px; color: var(--paper-ink); }
-.diagram-heading { flex-wrap: wrap; flex: 0 0 auto; min-height: 94px; gap: 12px; padding: 20px 22px; border-bottom-color: #e6e6e1; background: #fdfdfbf2; }
+.resizer { width: 6px; background: var(--panel-2); }
+.resizer i { background: var(--line-2); }
+.resizer-handle { width: 18px; }
+.diagram-panel { background: linear-gradient(var(--dia-grid) 1px, transparent 1px), linear-gradient(90deg, var(--dia-grid) 1px, transparent 1px), var(--dia-paper); background-size: 20px 20px; color: var(--dia-heading-text); }
+.diagram-heading { flex-wrap: wrap; flex: 0 0 auto; min-height: 94px; gap: 12px; padding: 20px 22px; border-bottom-color: var(--dia-heading-line); background: var(--dia-heading); }
 .diagram-heading h2 { margin-top: 8px; font-size: 16px; }
-.diagram-heading .eyebrow { color: #827d88; font-size: 9px; }
+.diagram-heading .eyebrow { color: var(--dia-stats-muted); font-size: 9px; }
 .run-stats { gap: 14px; }
 .run-stats span { min-width: 35px; font-size: 10px; }
 .run-stats small { font-size: 8px; }
@@ -120,44 +120,78 @@ button:focus-visible, select:focus-visible { outline: 2px solid #9168ff; outline
 .topology-body { position: relative; display: flex; flex: 1; min-height: 0; overflow: hidden; }
 .topology-body .diagram-wrap { min-width: 0; }
 .diagram-canvas text { font-family: inherit; }
-.omar-team-shadow { fill: transparent; }
-.omar-team-body { fill: #ffffff59; stroke: #ddddd7; stroke-width: 1; }
-.omar-team.running .omar-team-body { stroke: #d7d5de; }
-.omar-team-name { fill: #27242c; font-family: inherit; font-size: 13px; font-weight: 650; }
-.omar-team-kind { fill: #7c7684; font-family: inherit; font-size: 10px; }
-.omar-reaction-body, .omar-reaction.web .omar-reaction-body { fill: #fff; stroke: #dddbe3; stroke-width: 1; filter: drop-shadow(0 3px 4px #24203012); }
-.omar-reaction-accent { stroke: #7748ed; stroke-width: 3; fill: none; }
-.omar-reaction-badge, .omar-reaction.web .omar-reaction-badge { fill: #f3effb; stroke: #eae5f5; }
-.omar-reaction-index { fill: #8057c4; font-size: 9px; font-weight: 650; }
-.omar-reaction-name { fill: #25212a; font-family: inherit; font-size: 12px; font-weight: 650; }
-.omar-reaction-description { fill: #817b88; font-size: 10px; }
-.omar-reaction-meta { fill: #746c80; font-size: 9px; }
-.omar-model-badge { fill: #433c50; }
-.omar-model-mark { fill: #fff; font-size: 9px; font-weight: 700; }
-.node-connection { fill: #fff; stroke: #514b5b; stroke-width: 1.3; }
-.omar-reaction.completed .omar-reaction-body { fill: #fff; stroke: #cce2d6; }
-.omar-reaction.completed .omar-reaction-accent { stroke: #56af87; }
-.omar-reaction.completed .omar-reaction-badge { fill: #eff9f3; stroke: #dceee4; }
-.omar-reaction.completed .omar-reaction-index { fill: #458065; }
-.omar-reaction.completed .omar-reaction-meta { fill: #746c80; }
-.omar-reaction.running .omar-reaction-body { fill: #fff; stroke: #9675d9; }
-.omar-reaction.running .omar-reaction-badge { fill: #f1eafb; stroke: #e0d3f8; }
-.omar-reaction.running .omar-reaction-index { fill: #7748ed; }
-.omar-reaction.running .omar-reaction-meta { fill: #746c80; }
-.omar-reaction.selected .omar-reaction-body { fill: #fcfaff; stroke: #7748ed; stroke-width: 2; }
-.omar-reaction.selected .omar-reaction-name { fill: #382356; }
-.omar-edge { stroke: #8c8893; stroke-width: 1.4; }
-.omar-edge.trigger, .omar-edge.effect { stroke: #a39ba9; }
-.omar-action { fill: #f4effe; stroke: #aa93d1; }
-.omar-action.filled { fill: #ded0f7; stroke: #9168c8; }
-.diagram-zoom { right: 16px; bottom: 16px; padding: 4px; gap: 2px; border: 1px solid #e5e4df; border-radius: 9px; background: #ffffffed; box-shadow: 0 3px 12px #2821350a; }
-.diagram-zoom button { color: #68616f; border: 0; border-radius: 6px; background: transparent; font-size: 12px; }
-.diagram-zoom button:hover { color: #7748ed; background: #f4effc; }
-.diagram-legend { left: 16px; bottom: 16px; max-width: calc(100% - 160px); flex-wrap: wrap; gap: 8px; padding: 10px 12px; border: 1px solid #e5e4df; border-radius: 9px; color: #776f80; background: #ffffffed; font-size: 9px; box-shadow: 0 3px 12px #2821350a; }
-.timeline-handle { display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; min-height: 34px; padding: 0 16px; border-top: 1px solid #e4e4de; background: #f0f0ec; color: #665f6f; font-size: 10px; }
+/* The paper canvas of the redesign is the light theme's; in the dark theme the
+   diagram keeps the shell's dark tokens. Geometry and type stay the same in both. */
+.omar-team-body { stroke-width: 1; }
+.omar-team-name { font-family: inherit; font-size: 13px; font-weight: 650; }
+.omar-team-kind { font-family: inherit; font-size: 10px; }
+.omar-reaction-body, .omar-reaction.web .omar-reaction-body { stroke-width: 1; }
+.omar-reaction-accent { stroke-width: 3; }
+.omar-reaction-index { font-size: 9px; font-weight: 650; }
+.omar-reaction-name { font-family: inherit; font-size: 12px; font-weight: 650; }
+.omar-reaction-description { font-size: 10px; }
+.omar-reaction-meta { font-size: 9px; }
+.omar-model-mark { font-size: 9px; font-weight: 700; }
+.node-connection { stroke-width: 1.3; }
+.omar-reaction.selected .omar-reaction-body { stroke-width: 2; }
+.omar-edge { stroke-width: 1.4; }
+.diagram-zoom { right: 16px; bottom: 16px; padding: 4px; gap: 2px; border-radius: 9px; }
+.diagram-zoom button { border-radius: 6px; font-size: 12px; }
+.diagram-legend { left: 16px; bottom: 16px; max-width: calc(100% - 160px); flex-wrap: wrap; gap: 8px; padding: 10px 12px; border-radius: 9px; font-size: 9px; }
+.timeline-handle { display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; min-height: 34px; padding: 0 16px; border-top: 1px solid #e4e4de; font-size: 10px; }
 .timeline-handle > span { display: flex; align-items: center; gap: 7px; }
 .timeline-handle svg { transform: rotate(-90deg); }
-.timeline-handle small { font-size: 9px; color: #827b8b; }
+.timeline-handle small { font-size: 9px; }
+/* The redesign's shapes that main's dark theme has no colour for. */
+.omar-reaction-accent { stroke: var(--purple); }
+.omar-reaction.completed .omar-reaction-accent { stroke: var(--dia-done-meta); }
+.omar-reaction-description { fill: var(--dia-meta); }
+.omar-model-badge { fill: var(--dia-badge); stroke: var(--dia-badge-line); }
+.omar-model-mark { fill: var(--dia-index); }
+.node-connection { fill: var(--dia-node); stroke: var(--dia-node-line); }
+.diagram-zoom button { color: var(--dia-chrome-text); }
+.diagram-legend { color: var(--dia-chrome-text); border-color: var(--dia-chrome-line); background: var(--dia-chrome); }
+.timeline-handle { border-top: 1px solid var(--line); background: var(--panel-2); color: var(--muted); }
+.timeline-handle small { color: var(--muted); }
+.workflow-actions .secondary-button { color: var(--text-2); border-color: var(--line-2); background: var(--panel); }
+.resizer-handle { background: var(--panel-2); color: var(--muted); }
+/* The light theme: the paper the redesign was drawn on. */
+:root[data-theme="light"] .omar-team-shadow { fill: transparent; }
+:root[data-theme="light"] .omar-team-body { fill: #ffffff59; stroke: #ddddd7; }
+:root[data-theme="light"] .omar-team.running .omar-team-body { stroke: #d7d5de; }
+:root[data-theme="light"] .omar-team-name { fill: #27242c; }
+:root[data-theme="light"] .omar-team-kind { fill: #7c7684; }
+:root[data-theme="light"] .omar-reaction-body, :root[data-theme="light"] .omar-reaction.web .omar-reaction-body { fill: #fff; stroke: #dddbe3; filter: drop-shadow(0 3px 4px #24203012); }
+:root[data-theme="light"] .omar-reaction-accent { stroke: #7748ed; fill: none; }
+:root[data-theme="light"] .omar-reaction-badge, :root[data-theme="light"] .omar-reaction.web .omar-reaction-badge { fill: #f3effb; stroke: #eae5f5; }
+:root[data-theme="light"] .omar-reaction-index { fill: #8057c4; }
+:root[data-theme="light"] .omar-reaction-name { fill: #25212a; }
+:root[data-theme="light"] .omar-reaction-description { fill: #817b88; }
+:root[data-theme="light"] .omar-reaction-meta { fill: #746c80; }
+:root[data-theme="light"] .omar-model-badge { fill: #433c50; }
+:root[data-theme="light"] .omar-model-mark { fill: #fff; }
+:root[data-theme="light"] .node-connection { fill: #fff; stroke: #514b5b; }
+:root[data-theme="light"] .omar-reaction.completed .omar-reaction-body { fill: #fff; stroke: #cce2d6; }
+:root[data-theme="light"] .omar-reaction.completed .omar-reaction-accent { stroke: #56af87; }
+:root[data-theme="light"] .omar-reaction.completed .omar-reaction-badge { fill: #eff9f3; stroke: #dceee4; }
+:root[data-theme="light"] .omar-reaction.completed .omar-reaction-index { fill: #458065; }
+:root[data-theme="light"] .omar-reaction.completed .omar-reaction-meta { fill: #746c80; }
+:root[data-theme="light"] .omar-reaction.running .omar-reaction-body { fill: #fff; stroke: #9675d9; }
+:root[data-theme="light"] .omar-reaction.running .omar-reaction-badge { fill: #f1eafb; stroke: #e0d3f8; }
+:root[data-theme="light"] .omar-reaction.running .omar-reaction-index { fill: #7748ed; }
+:root[data-theme="light"] .omar-reaction.running .omar-reaction-meta { fill: #746c80; }
+:root[data-theme="light"] .omar-reaction.selected .omar-reaction-body { fill: #fcfaff; stroke: #7748ed; }
+:root[data-theme="light"] .omar-reaction.selected .omar-reaction-name { fill: #382356; }
+:root[data-theme="light"] .omar-edge { stroke: #8c8893; }
+:root[data-theme="light"] .omar-edge.trigger, :root[data-theme="light"] .omar-edge.effect { stroke: #a39ba9; }
+:root[data-theme="light"] .omar-action { fill: #f4effe; stroke: #aa93d1; }
+:root[data-theme="light"] .omar-action.filled { fill: #ded0f7; stroke: #9168c8; }
+:root[data-theme="light"] .diagram-zoom { border: 1px solid var(--dia-chrome-line); background: var(--dia-chrome); box-shadow: 0 3px 12px #2821350a; }
+:root[data-theme="light"] .diagram-zoom button { color: #68616f; border: 0; background: transparent; }
+:root[data-theme="light"] .diagram-zoom button:hover { color: #7748ed; background: #f4effc; }
+:root[data-theme="light"] .diagram-legend { border: 1px solid #e5e4df; color: #776f80; background: #ffffffed; box-shadow: 0 3px 12px #2821350a; }
+:root[data-theme="light"] .timeline-handle { background: #f0f0ec; color: #665f6f; }
+:root[data-theme="light"] .timeline-handle small { color: #827b8b; }
 .timeline-handle:hover { background: #eae7f1; }
 .step-inspector { position: absolute; top: 14px; right: 14px; bottom: 66px; z-index: 3; width: min(290px, calc(100% - 28px)); padding: 20px; overflow: auto; overscroll-behavior: contain; border: 1px solid #dfdbe5; border-radius: 14px; color: #302a39; background: #fffffffa; box-shadow: 0 12px 40px #24152f1a; }
 .step-inspector header { display: flex; justify-content: space-between; align-items: center; }

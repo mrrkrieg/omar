@@ -14,7 +14,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import { startFakeServe, INVALID_MARKER } from "./fake-serve.mjs";
-import { RUN_STATUSES, assertRunRecord, isRunFinished } from "../app/lib/protocol.ts";
+import { RUN_STATUSES, assertRunRecord, isRunFinished, parseInputValue } from "../app/lib/protocol.ts";
 import { defaultRunTimeout, describeRunFailure } from "../app/lib/run-feedback.ts";
 
 const golden = JSON.parse(
@@ -304,6 +304,19 @@ test("scoped agent callbacks stay in their chat after another chat becomes activ
   } finally { await fake.close(); }
 });
 
+test("enum string inputs are bare text and nested types stay JSON", () => {
+  const decision = 'string in ["approved","needs_revision"]';
+  assert.equal(parseInputValue(decision, "approved"), "approved");
+  // Membership is the runtime's check; whitespace is kept as for `string`.
+  assert.equal(parseInputValue(decision, "  maybe \n"), "  maybe \n");
+  assert.equal(parseInputValue("string", "  maybe \n"), "  maybe \n");
+  assert.equal(parseInputValue(decision, '"approved"'), '"approved"');
+  for (const nested of [`list<${decision}>`, `option<${decision}>`]) {
+    assert.deepEqual(parseInputValue(nested, ' ["approved"] '), ["approved"]);
+    assert.equal(parseInputValue(nested, "approved"), undefined);
+  }
+  assert.equal(parseInputValue(`option<${decision}>`, '"approved"'), "approved");
+});
 
 test("a manual handoff timeout explains the missing operator response", () => {
   const error = "reaction 'prepare.reaction.0' invocation 'id': 'prepare.chatgpt' did not answer within 300s, and contract '( prepare.packet | prepare.blocked )' requires an effect";

@@ -51,6 +51,8 @@ pub enum DiagramStatus {
     Running,
     Completed,
     Failed,
+    /// Checkpointed and parked; `omar resume` continues it.
+    Paused,
 }
 
 /// The name serde puts on the wire for a unit variant.
@@ -76,6 +78,12 @@ pub enum DiagramEventKind {
     ReactionCompleted,
     RunCompleted,
     RunFailed,
+    RunPaused,
+    /// A checkpoint was published at the tag the event carries.
+    RunCheckpointed,
+    /// The run's clock started: the payload's `clock_origin` is the unix
+    /// millisecond its logical time zero stands at.
+    ClockStarted,
 }
 
 impl std::fmt::Display for DiagramEventKind {
@@ -194,6 +202,14 @@ pub struct DiagramSnapshot {
     /// published; this says whether the run is keeping its promises.
     #[serde(default)]
     pub lag: Option<u64>,
+    /// The unix millisecond the run's logical time zero stands at, so a
+    /// client can read the run's physical clock off its own wall clock,
+    /// before the first tag and whenever it connected. A resume moves it
+    /// back by the time the run had already spent. `None` until the loop
+    /// starts its clock, which is after the agents are up.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub clock_origin: Option<u64>,
     /// The containers to draw. Empty for a program compiled before instances
     /// were carried through, which is how a client tells the difference.
     pub instances: Vec<DiagramInstance>,
@@ -322,6 +338,7 @@ impl DiagramSnapshot {
             status: DiagramStatus::Ready,
             current_tag: None,
             lag: None,
+            clock_origin: None,
             instances,
             agents,
             ports,
@@ -376,6 +393,15 @@ pub trait TopologyObserver: Send + Sync {
     }
     fn run_completed(&self, _outputs: &BTreeMap<String, Value>) {}
     fn run_failed(&self, _message: &str) {}
+    /// The run checkpointed and parked at a tag boundary; nothing more
+    /// happens until a resume.
+    fn run_paused(&self, _checkpoint: &str) {}
+    /// The loop started its clock: `origin_unix_millis` is where logical
+    /// time zero stands on the wall clock (a resume puts it in the past by
+    /// the time already spent). Nothing fires before this.
+    fn clock_started(&self, _origin_unix_millis: u64) {}
+    /// A checkpoint was published after `tag` completed; `trigger` says why.
+    fn checkpoint_published(&self, _checkpoint: &str, _trigger: &str, _tag: Option<(u64, u64)>) {}
 }
 
 pub struct NoopTopologyObserver;
@@ -559,6 +585,35 @@ impl TopologyObserver for DiagramPublisher {
             json!({ "message": message }),
         );
     }
+
+    fn run_paused(&self, checkpoint: &str) {
+        self.publish_status(
+            DiagramEventKind::RunPaused,
+            DiagramStatus::Paused,
+            json!({ "checkpoint": checkpoint }),
+        );
+    }
+
+    fn clock_started(&self, origin_unix_millis: u64) {
+        self.publish_with(
+            DiagramEventKind::ClockStarted,
+            None,
+            json!({ "clock_origin": origin_unix_millis }),
+            |snapshot| snapshot.clock_origin = Some(origin_unix_millis),
+        );
+    }
+
+    fn checkpoint_published(&self, checkpoint: &str, trigger: &str, tag: Option<(u64, u64)>) {
+        self.publish_with(
+            DiagramEventKind::RunCheckpointed,
+            tag.map(|(timestamp, microstep)| DiagramTag {
+                timestamp,
+                microstep,
+            }),
+            json!({ "checkpoint": checkpoint, "trigger": trigger }),
+            |_| {},
+        );
+    }
 }
 
 pub struct DiagramServer {
@@ -620,6 +675,15 @@ impl DiagramServer {
 
     pub fn publisher(&self) -> DiagramPublisher {
         self.publisher.clone()
+    }
+
+    /// The picture as it stands, for keeping once this server is gone.
+    pub fn snapshot(&self) -> DiagramSnapshot {
+        self.publisher
+            .snapshot
+            .read()
+            .expect("diagram snapshot poisoned")
+            .clone()
     }
 }
 
@@ -822,6 +886,7 @@ mod tests {
             team: "Sample".to_string(),
             state_vars: BTreeMap::new(),
             params: BTreeMap::new(),
+            types: BTreeMap::new(),
             instances: BTreeMap::new(),
             timers: BTreeMap::new(),
             agents: BTreeMap::from([(
@@ -837,6 +902,7 @@ mod tests {
                     PortState {
                         kind: PortKind::Input,
                         ty: "string".to_string(),
+                        declared: None,
                         delay: None,
                         instance: String::new(),
                     },
@@ -846,6 +912,7 @@ mod tests {
                     PortState {
                         kind: PortKind::Output,
                         ty: "string".to_string(),
+                        declared: None,
                         delay: None,
                         instance: String::new(),
                     },
@@ -878,6 +945,7 @@ mod tests {
         let member = |instance: &str, kind, ty: &str| PortState {
             kind,
             ty: ty.to_string(),
+            declared: None,
             delay: None,
             instance: instance.to_string(),
         };
@@ -886,6 +954,7 @@ mod tests {
             team: "SimpleBrief".to_string(),
             state_vars: BTreeMap::new(),
             params: BTreeMap::new(),
+            types: BTreeMap::new(),
             timers: BTreeMap::new(),
             instances: BTreeMap::from([
                 (

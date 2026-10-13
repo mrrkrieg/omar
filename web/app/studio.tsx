@@ -4,11 +4,12 @@ import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "re
 import { ChatMessage as ChatMessageView } from "./chat-message";
 import { ChatHistory, OmarLogo, SidebarIcon, useHistoryDrawer } from "./chat-history";
 import { Artifacts } from "./artifacts";
-import { DeployConfirmation } from "./deploy-confirmation";
+import { DeployConfirmation, type DeployOptions } from "./deploy-confirmation";
 import { defaultRunTimeout, describeRunFailure } from "./lib/run-feedback";
 import { AgentTerminal } from "./agent-terminal";
 import { Timeline } from "./timeline";
 import { BackendMenu } from "./backend-menu";
+import { SettingsMenu } from "./settings-menu";
 import { DiagramCanvas } from "./diagram/diagram-canvas";
 import { OmarEditor } from "./omar-source";
 import { PortPanel } from "./port-panel";
@@ -43,9 +44,18 @@ import {
   checkServeHealth,
   diagramUrlFor,
   fetchDiagram,
+  fetchRunSnapshot,
   fetchPanel,
   fetchRun,
   checkProgram,
+  fetchCheckpoint,
+  fetchCheckpoints,
+  fetchRunTimeline,
+  pauseRun,
+  resumeRun,
+  rollbackRun,
+  type CheckpointDetail,
+  type CheckpointSummary,
   startRun,
   stopRun,
   subscribeToDiagram,
@@ -181,6 +191,16 @@ function StudioWorkspace({ serveUrl = "", historyUrl, designAgent, selectedId, o
   const [design, setDesign] = useState<ProposedDesign | null>(null);
   const [run, setRun] = useState<RunRecord | null>(null);
   const [error, setError] = useState("");
+  // The run's checkpoints, drawn on the timeline; the one a resume would
+  // continue from; and the one whose preview is open.
+  const [checkpoints, setCheckpoints] = useState<CheckpointSummary[]>([]);
+  const [resumePoint, setResumePoint] = useState<string | null>(null);
+  // The pick is remembered with the run it was made in, so a new run starts
+  // with none without an effect having to clear it.
+  const [checkpointPick, setCheckpointPick] = useState<{ run: string; id: string } | null>(null);
+  const [checkpointDetail, setCheckpointDetail] = useState<CheckpointDetail | null>(null);
+  // Bumped whenever the run says a checkpoint landed, so the listing refetches.
+  const [checkpointEpoch, setCheckpointEpoch] = useState(0);
   const [prompt, setPrompt] = useState("");
   /** Diagram components the operator has highlighted for the next message. */
   const [selection, setSelection] = useState<string[]>([]);
@@ -502,6 +522,17 @@ function StudioWorkspace({ serveUrl = "", historyUrl, designAgent, selectedId, o
             setPending([]);
             void settle();
           }
+          if (event.kind === "run_checkpointed" || event.kind === "run_paused") {
+            // A new mark for the timeline: refetch the listing it draws.
+            setCheckpointEpoch((n) => n + 1);
+          }
+          if (event.kind === "run_paused") {
+            // Checkpointed and parked at a tag boundary: the picture stays,
+            // labelled paused, and nothing is owed until `omar resume`.
+            setPhase("finished");
+            setPending([]);
+            void settle();
+          }
           if (event.kind === "run_failed") {
             runRef.current = { ...record, status: "failed" };
             setRun(runRef.current);
@@ -638,11 +669,16 @@ function StudioWorkspace({ serveUrl = "", historyUrl, designAgent, selectedId, o
         buffered = [];
         const restore = async () => {
           const activeRun = conversation.run && !isRunFinished(conversation.run.status);
+          // Parked, not over: a paused run keeps its controls and its timeline.
+          const parkedRun = conversation.run?.status === "paused";
           // Keep the current chat on screen while its replacement is replayed
           // and its live snapshot is fetched. Commit them in one React batch.
+          // A paused run's diagram server is gone; serve kept its last picture.
           const liveSnapshot = activeRun && conversation.run?.diagram_address
             ? await fetchDiagram(diagramUrlFor(conversation.run), abort.signal).catch(() => null)
-            : null;
+            : conversation.run?.status === "paused"
+              ? await fetchRunSnapshot(serveUrl, conversation.run.run_id, abort.signal).catch(() => null)
+              : null;
           if (!connected || currentRevision !== revision || conversation.id !== subscribedId) return;
           restoreConversation(conversation);
           runRef.current = conversation.run ?? null;
@@ -669,7 +705,7 @@ function StudioWorkspace({ serveUrl = "", historyUrl, designAgent, selectedId, o
           setAssistantBusy(conversation.busy);
           // A finished run must not override the proposal restored from the
           // transcript. Only a live topology owns the diagram and its controls.
-          if (replayedProposal && !activeRun) {
+          if (replayedProposal && !activeRun && !parkedRun) {
             runRef.current = null;
             // Keep a failed record visible beside the restored proposal.
             // The proposal owns the source; the record explains the last run.
@@ -677,7 +713,7 @@ function StudioWorkspace({ serveUrl = "", historyUrl, designAgent, selectedId, o
             if (conversation.run?.status === "failed") setError(conversation.run.error ?? "The run failed.");
             setTab("source");
             setPhase("review");
-          } else if (conversation.busy && !activeRun) {
+          } else if (conversation.busy && !activeRun && !parkedRun) {
             setPhase("drafting");
           }
           // Replies received during the snapshot fetch are newer than the
@@ -699,7 +735,7 @@ function StudioWorkspace({ serveUrl = "", historyUrl, designAgent, selectedId, o
     };
   }, [agent, restoreConversation, observe, loadPanel, serveUrl, historyUrl, onSelect]);
 
-  async function confirmDesign(timeoutSeconds: number) {
+  async function confirmDesign(options: DeployOptions) {
     if (!design || !["review", "finished", "failed"].includes(phase)) return;
     setConfirming(false);
     setPhase("spawning");
@@ -711,8 +747,10 @@ function StudioWorkspace({ serveUrl = "", historyUrl, designAgent, selectedId, o
       const record = await startRun(serveUrl, {
         program: source,
         inputs: design.inputs,
-        timeout_seconds: timeoutSeconds,
+        timeout_seconds: options.timeoutSeconds,
         conversation_id: conversationIdRef.current ?? undefined,
+        keep_workspaces: options.keepWorkspaces,
+        checkpoint_period: options.checkpointPeriod,
       });
       if (scope !== scopeRef.current) return;
       setSnapshot((current) => (current ? { ...current, team: record.team } : current));
@@ -769,6 +807,54 @@ function StudioWorkspace({ serveUrl = "", historyUrl, designAgent, selectedId, o
       if (checked.preview && !runRef.current) setSnapshot(checked.preview);
     } finally {
       if (scope === scopeRef.current) setApplyingConfiguration(false);
+    }
+  }
+
+  /** Ask the run to checkpoint and park at its next tag boundary. */
+  async function requestPause() {
+    if (!run || isStopping || isPausing) return;
+    const scope = scopeRef.current;
+    setError("");
+    try {
+      const record = await pauseRun(serveUrl, run.run_id);
+      if (scope === scopeRef.current) setRun(record);
+    } catch (cause) {
+      if (scope !== scopeRef.current) return;
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
+
+  /** Move the resume point of a paused run back to the checkpoint picked on the timeline. */
+  async function requestRollback(checkpoint: string) {
+    if (!run || run.status !== "paused" || checkpoint === resumePoint) return;
+    const scope = scopeRef.current;
+    setError("");
+    try {
+      const point = await rollbackRun(serveUrl, run.run_id, checkpoint);
+      if (scope !== scopeRef.current) return;
+      setResumePoint(point);
+      setCheckpointEpoch((n) => n + 1);
+    } catch (cause) {
+      if (scope !== scopeRef.current) return;
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
+
+  /** Continue a paused run: the daemon restores its files and agents, then the panel watches it again. */
+  async function requestResume() {
+    if (!run || run.status !== "paused") return;
+    const scope = scopeRef.current;
+    setError("");
+    try {
+      const record = await resumeRun(serveUrl, run.run_id);
+      if (scope !== scopeRef.current) return;
+      runRef.current = record;
+      setRun(record);
+      setPhase("observing");
+      observe(record);
+    } catch (cause) {
+      if (scope !== scopeRef.current) return;
+      setError(cause instanceof Error ? cause.message : String(cause));
     }
   }
 
@@ -884,6 +970,109 @@ function StudioWorkspace({ serveUrl = "", historyUrl, designAgent, selectedId, o
   // The daemon's own word for it. Every terminal status replaces it, so the
   // state cannot outlive the run it was asked of.
   const isStopping = run?.status === "stopping";
+  const isPausing = run?.status === "pausing";
+  const isPaused = run?.status === "paused";
+
+  // The run's checkpoints, for the timeline. Keyed on the run's id rather
+  // than the record object, which every poll replaces; refetched when the
+  // run reports a new checkpoint, pauses, or rolls back.
+  const runId = run?.run_id;
+  const selectedCheckpoint =
+    checkpointPick && checkpointPick.run === runId ? checkpointPick.id : null;
+  useEffect(() => {
+    if (!runId) return;
+    const scope = scopeRef.current;
+    void fetchCheckpoints(serveUrl, runId)
+      .then((listing) => {
+        if (scope !== scopeRef.current) return;
+        setCheckpoints(listing.checkpoints);
+        setResumePoint(listing.resume_point);
+      })
+      .catch(() => {});
+  }, [runId, serveUrl, checkpointEpoch]);
+
+  // A run observed without a draft behind it (admitted over the API, or the
+  // page reloaded) still gets its timeline: the daemon projects it from the
+  // program it staged, so checkpoints have tags to sit on.
+  const stepsMissing = steps.length === 0;
+  useEffect(() => {
+    if (!runId || !stepsMissing) return;
+    const scope = scopeRef.current;
+    void fetchRunTimeline(serveUrl, runId)
+      .then((projection) => {
+        if (scope !== scopeRef.current || projection.steps.length === 0) return;
+        setSteps(projection.steps);
+        setTruncated(projection.truncated);
+      })
+      .catch(() => {});
+  }, [runId, serveUrl, stepsMissing]);
+
+  // The preview of the checkpoint picked on the timeline. Shown only while
+  // it matches the pick, so a stale detail never describes another one.
+  useEffect(() => {
+    if (!runId || !selectedCheckpoint) return;
+    const scope = scopeRef.current;
+    void fetchCheckpoint(serveUrl, runId, selectedCheckpoint)
+      .then((detail) => {
+        if (scope === scopeRef.current) setCheckpointDetail(detail);
+      })
+      .catch(() => {});
+  }, [runId, serveUrl, selectedCheckpoint, checkpointEpoch]);
+  const shownDetail =
+    selectedCheckpoint && checkpointDetail?.id === selectedCheckpoint ? checkpointDetail : null;
+
+  // Pause, Stop and Resume act on the run's timeline — a pause lands at a tag
+  // boundary, a resume continues from a checkpointed tag — so they live with
+  // the strip rather than in the heading, and stay reachable when it is folded.
+  const runControls =
+    (phase === "observing" && run) || (isPaused && run) ? (
+      <span className="run-controls" role="group" aria-label="Run controls">
+        {isPaused && run ? (
+          <button
+            className="primary-button"
+            onClick={() => void requestResume()}
+            type="button"
+            title="Restores the resume point's files and agents, then continues the queue"
+          >
+            Resume
+          </button>
+        ) : null}
+        {phase === "observing" && run ? (
+          <button
+            className="secondary-button"
+            onClick={() => void requestPause()}
+            type="button"
+            disabled={isStopping || isPausing}
+            title={
+              isPausing
+                ? "The current tag has to close first"
+                : "Checkpoints at the next tag boundary, then parks the run"
+            }
+          >
+            {isPausing ? "Pausing…" : "Pause"}
+          </button>
+        ) : null}
+        {(phase === "observing" || isPaused) && run ? (
+          <button
+            className="secondary-button"
+            onClick={() => void requestStop()}
+            type="button"
+            disabled={isStopping}
+            title={
+              isStopping
+                ? "The current tag has to close first"
+                : isPaused
+                  ? "Gives the paused run up, which frees its team; its checkpoints stay on disk"
+                  : isPausing
+                    ? "Outranks the pause: the run stops at the next tag boundary instead"
+                    : "Closes the current tag, then persists and tears down"
+            }
+          >
+            {isStopping ? "Stopping…" : "Stop"}
+          </button>
+        ) : null}
+      </span>
+    ) : null;
 
   // Widths are clamped against the workspace so the diagram always keeps a
   // usable column, whichever divider is being dragged. Below a panel's minimum
@@ -983,7 +1172,7 @@ function StudioWorkspace({ serveUrl = "", historyUrl, designAgent, selectedId, o
           <header className="conversation-header">
             {!isDemo && historyDrawer ? <button type="button" ref={historyButtonRef} className="history-button" onClick={() => setDrawerOpen((open) => !open)} aria-expanded={historyVisible} aria-controls="chat-history" aria-haspopup="dialog" aria-label="Open chat history"><SidebarIcon direction="open" /></button> : null}
             <div className="conversation-crumb"><WorkflowIcon name="workflow" size={16} /><span>Workflow builder</span><i>/</i><strong>{workflowNames[conversationId]?.name ?? snapshot?.team ?? (messages.length ? conversationTitle : "New workflow")}</strong></div>
-            <div className="conversation-actions"><button type="button" className="secondary-button files-button" disabled={isDemo || switchingChat || daemon.state !== "live"} onClick={() => setFilesOpen(true)} aria-haspopup="dialog">Files & versions</button>{snapshot ? <button type="button" className="conversation-fold" onClick={() => setBuilder(0)} aria-label="Hide conversation"><WorkflowIcon name="chevron" size={16} /></button> : null}</div>
+            <div className="conversation-actions"><button type="button" className="secondary-button files-button" disabled={isDemo || switchingChat || daemon.state !== "live"} onClick={() => setFilesOpen(true)} aria-haspopup="dialog">Files & versions</button><SettingsMenu />{snapshot ? <button type="button" className="conversation-fold" onClick={() => setBuilder(0)} aria-label="Hide conversation"><WorkflowIcon name="chevron" size={16} /></button> : null}</div>
           </header>
           <div className="messages" ref={threadRef}>
             {messages.length > 0 ? <div className="date-divider">Conversation</div> : null}
@@ -1118,7 +1307,7 @@ function StudioWorkspace({ serveUrl = "", historyUrl, designAgent, selectedId, o
               <span><small>TAG</small>{tag}</span>
               <span><small>LAG</small>{lag}</span>
             </div>
-            {canConfirm || (phase === "observing" && run) ? (
+            {canConfirm ? (
             <div className="workflow-actions">
               {canConfirm ? (
                 <span role="group" aria-label="Deploy design">
@@ -1129,28 +1318,17 @@ function StudioWorkspace({ serveUrl = "", historyUrl, designAgent, selectedId, o
                     className="primary-button"
                     onClick={() => setConfirming(true)}
                     type="button"
-                    disabled={!canRun || applyingConfiguration || switchingChat || checking || sourceErrors.length > 0}
+                    // Not disabled during the background compiler check: it
+                    // runs on a debounce after every proposal, and a button
+                    // that blinks off for it drops the click that was already
+                    // on its way. The confirmation's own button still waits.
+                    disabled={!canRun || applyingConfiguration || switchingChat || sourceErrors.length > 0}
                     aria-haspopup="dialog"
                     aria-label={retrying ? "Run again" : "Deploy"}
                   >
                     <WorkflowIcon name="arrow" size={14} /> {retrying ? "Run again" : "Run workflow"}
                   </button>
                 </span>
-              ) : null}
-              {phase === "observing" && run ? (
-                <button
-                  className="secondary-button"
-                  onClick={() => void requestStop()}
-                  type="button"
-                  disabled={isStopping}
-                  title={
-                    isStopping
-                      ? "The current tag has to close first"
-                      : "Closes the current tag, then persists and tears down"
-                  }
-                >
-                  {isStopping ? "Stopping…" : "Stop"}
-                </button>
               ) : null}
             </div>
             ) : null}
@@ -1192,6 +1370,21 @@ function StudioWorkspace({ serveUrl = "", historyUrl, designAgent, selectedId, o
               index={stepIndex}
               live={following && phase === "observing"}
               truncated={truncated}
+              controls={runControls}
+              checkpoints={runId ? checkpoints : []}
+              resumePoint={runId ? resumePoint : null}
+              selected={selectedCheckpoint}
+              detail={shownDetail}
+              canRollBack={isPaused}
+              rollBackHint={
+                run && !isPaused
+                  ? "Pause the run first; a rollback picks the tag a paused run continues from."
+                  : undefined
+              }
+              onSelectCheckpoint={(id) =>
+                setCheckpointPick(id && runId ? { run: runId, id } : null)
+              }
+              onRollBack={(id) => void requestRollback(id)}
               onScrub={(next) => {
                 // Scrubbing takes the strip off the run: the operator is
                 // looking at a tag, not at where execution has reached.
@@ -1201,13 +1394,16 @@ function StudioWorkspace({ serveUrl = "", historyUrl, designAgent, selectedId, o
               onClose={() => setTimelineOpen(false)}
             />
           ) : (
-            <button
-              type="button"
-              className="timeline-handle"
-              onClick={() => setTimelineOpen(true)}
-            >
-              <span><WorkflowIcon name="chevron" size={13} /> Run timeline</span><small>{events.length ? `${events.length} events` : `${steps.length} projected steps`}</small>
-            </button>
+            <div className="timeline-handle-bar">
+              <button
+                type="button"
+                className="timeline-handle"
+                onClick={() => setTimelineOpen(true)}
+              >
+                <span><WorkflowIcon name="chevron" size={13} /> Run timeline</span><small>{events.length ? `${events.length} events` : `${steps.length} projected steps`}</small>
+              </button>
+              {runControls}
+            </div>
           )}
         </section>
         ) : null}
@@ -1283,12 +1479,14 @@ function StudioWorkspace({ serveUrl = "", historyUrl, designAgent, selectedId, o
       {confirming && canConfirm ? (
         <DeployConfirmation
           team={snapshot?.team ?? "this topology"}
-          disabled={!canRun || applyingConfiguration || switchingChat || checking || sourceErrors.length > 0}
+          // The background check does not gate this either: the daemon
+          // compiles what it is sent and refuses a bad program itself.
+          disabled={!canRun || applyingConfiguration || switchingChat || sourceErrors.length > 0}
           retry={retrying}
           manual={snapshot?.agents.some((agent) => agent.backend.toLowerCase() === "web")}
           initialTimeoutSeconds={defaultRunTimeout(snapshot?.agents ?? [])}
           onCancel={() => setConfirming(false)}
-          onConfirm={(timeoutSeconds) => void confirmDesign(timeoutSeconds)}
+          onConfirm={(options) => void confirmDesign(options)}
         />
       ) : null}
 
@@ -1303,7 +1501,7 @@ function StudioWorkspace({ serveUrl = "", historyUrl, designAgent, selectedId, o
         />
       ) : null}
 
-      {filesOpen ? <Artifacts key={serveUrl} serveUrl={serveUrl} onClose={() => setFilesOpen(false)} /> : null}
+      {filesOpen ? <Artifacts key={serveUrl} serveUrl={serveUrl} runId={run?.run_id ?? null} onClose={() => setFilesOpen(false)} /> : null}
       {terminalAgent ? (
         <AgentTerminal
           serveUrl={serveUrl}
