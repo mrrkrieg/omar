@@ -4,8 +4,8 @@ team SuppliedResearch[writer: Codex, reviewer: Codex] {
     action draft: string
     action review: string
     output result: string
-    prompt writer(brief) -> draft "Write a research brief using only these supplied, labeled source excerpts. Include source labels and distinguish inference from evidence; preserve excerpts for the reviewer. Request and documents: $(brief)"
-    prompt reviewer(draft) -> review "Review this actual research draft against the included source excerpts. Flag unsupported claims and missing source labels. Return the draft and excerpts followed by review comments: $(draft)"
-    prompt writer(review) -> result "Revise the research brief using this review. Keep source labels, uncertainties and supported claims. Return final Markdown. Draft and review: $(review)"
+    task writer(brief) -> draft "Write a research brief using only these supplied, labeled source excerpts. Include source labels and distinguish inference from evidence; preserve excerpts for the reviewer. Request and documents: $(brief)"
+    task reviewer(draft) -> review "Review this actual research draft against the included source excerpts. Flag unsupported claims and missing source labels. Return the draft and excerpts followed by review comments: $(draft)"
+    task writer(review) -> result "Revise the research brief using this review. Keep source labels, uncertainties and supported claims. Return final Markdown. Draft and review: $(review)"
 }
 main { flow = SuppliedResearch() }

@@ -42,7 +42,7 @@ team Node(idx : int)[agent : Codex]
     input token : int
     output out : int
 
-    prompt agent(token) -> out "You are node $(idx). Token: $(token)"
+    task agent(token) -> out "You are node $(idx). Token: $(token)"
 }
 
 main Relay {
@@ -72,7 +72,7 @@ timer once(5, 0)
 
 A non-zero period re-arms forever, so a program built on one does not finish on
 its own. Prefer `period 0` unless the operator asked for something that repeats.
-`$(t)` in a prompt reads back the time the timer fired at.
+`$(t)` in a task's prompt reads back the time the timer fired at.
 
 A timer is what lets a program start with no input, which is otherwise
 impossible — every other trigger needs something upstream to write to it.
@@ -85,7 +85,7 @@ team Stage(role : string)[worker : Codex]
     input inp : string
     output out : string
 
-    prompt worker(inp) -> out "You are the $(role) stage. Got $(inp)."
+    task worker(inp) -> out "You are the $(role) stage. Got $(inp)."
 }
 
 team Pipeline[reporter : Codex]
@@ -99,7 +99,7 @@ team Pipeline[reporter : Codex]
     brief -> draft.inp
     draft.out -> refine.inp
 
-    prompt reporter(refine.out) -> summary "Report $(refine.out)."
+    task reporter(refine.out) -> summary "Report $(refine.out)."
 }
 ```
 
@@ -187,11 +187,19 @@ retrieval. Jev should replace a decision call; do not add redundant reviews.
 Syntax (after optional `within`, before the fallback prompt):
 
 ```
-prompt reviewer(draft) -> (ready | revise) within(60s)
+task reviewer(draft) -> (ready | revise) within(60s)
   jev("artifact-requirement-v1", "The opening identifies the founder and event.",
       appears_satisfied: ready, partially_satisfied: revise, not_satisfied: revise)
   "Review this requirement using the supplied draft."
 ```
+
+Wire the complete sequence explicitly: the preceding step's output feeds a
+code reaction with the task's deterministic checks; its pass output feeds the
+Jev gate and its fail output feeds repair directly. A deterministic failure must
+call neither Jev nor reasoning. Jev's confident positive feeds the next step;
+confident negative feeds repair; low confidence, uncertainty or provider failure
+uses the configured reasoning fallback. An unresolved reasoning decision stops
+with its explanation and starts no downstream branch.
 
 Wire `revise` to revision and `ready` to the next step. Both forward the unchanged
 draft. For owner routing use `review-owner-v1` with entries such as

@@ -18,10 +18,9 @@ import {
 } from "../lib/protocol";
 
 /**
- * Lingua Franca renders reactors as labelled containers whose ports sit on the
- * container boundary and whose reactions are chevrons laid out inside. We
- * reproduce that visual grammar directly: ELK computes the layered layout and
- * this module draws it as SVG. No KIELER/KLighD involved.
+ * Runtime instances stay grouped with their boundary ports and reactions.
+ * ELK computes the layered layout; SVG task cards apply the workflow design
+ * without changing the topology or its connections.
  */
 
 type Point = { x: number; y: number };
@@ -62,15 +61,15 @@ type ElkNode = {
 
 type Box = { x: number; y: number; width: number; height: number };
 
-const REACTION_SIZE = { width: 154, height: 50 };
-/** Chevron text starts after the order badge and must clear the right notch. */
-const REACTION_TEXT_X = 46;
+const REACTION_SIZE = { width: 210, height: 88 };
+/** Task text starts after the order badge and leaves room for the deadline. */
+const REACTION_TEXT_X = 48;
 /**
  * The stopwatch a `within` deadline is drawn as, and the room it needs.
  *
  * A face plus a crown, so it reads as a stopwatch rather than the clock a timer
  * already uses — one counts down against a reaction, the other fires on its
- * own. It sits before the chevron's point with its interval beneath, and the
+ * own. It sits before the task card's edge with its interval beneath, and the
  * node widens to hold both rather than crowding the name.
  */
 const WITHIN_RADIUS = 7;
@@ -97,7 +96,7 @@ const CANVAS_MARGIN = 28;
  * the border. Every way of doing that desynchronised the layout: moving ports
  * afterwards left edges on a staircase, and `spacing.portsSurrounding` moves
  * the ports without moving the children ELK routes to, which orphans the
- * chevrons. Outside the box there is nothing to avoid.
+ * task cards. Outside the box there is nothing to avoid.
  */
 const TITLE_BAND = 30;
 /** Least vertical gap between two ports on the same side. */
@@ -157,8 +156,14 @@ type TimerView = {
 type ReactionView = {
   id: string;
   order: number;
+  /** Its number among its own team instance's tasks, which is how the source reads. */
+  localOrder: number;
   name: string;
   meta: string;
+  contract: string;
+  /** One line of what the task asks, from its prompt; the contract for a code reaction. */
+  summary: string;
+  backend: string;
   status: string;
   box: Box;
   /** The agent that runs it, which is whose terminal opens on double click. */
@@ -206,7 +211,7 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-const CHEVRON_NOTCH = 11;
+const CARD_END_PADDING = 11;
 
 /** Shapes are drawn at the origin and placed by a group transform, so that
  * layout changes animate rather than jumping. */
@@ -214,20 +219,6 @@ const CHEVRON_NOTCH = 11;
 const DRAG_SLOP = 4;
 
 const ORIGIN: Point = { x: 0, y: 0 };
-
-/** Six-point Lingua Franca reaction chevron. */
-function chevronPoints(width: number, height: number): string {
-  const mid = height / 2;
-  return [
-    `0,0`,
-    `${width - CHEVRON_NOTCH},0`,
-    `${width},${mid}`,
-    `${width - CHEVRON_NOTCH},${height}`,
-    `0,${height}`,
-    `${CHEVRON_NOTCH},${mid}`,
-  ].join(" ");
-}
-
 
 /**
  * Break a polyline so a label can sit in the gap.
@@ -292,7 +283,7 @@ function distance(a: Point, b: Point): number {
 /**
  * Nudge a polyline's endpoints along their own direction. Positive values pull
  * back (so arrowheads clear port glyphs); negative values push forward (so
- * arrowheads reach a chevron's recessed leading vertex instead of its bounds).
+ * arrowheads reach a task card's recessed leading vertex instead of its bounds).
  */
 /** Below this a segment counts as already on an axis. */
 const AXIS_EPSILON = 0.5;
@@ -435,7 +426,7 @@ function flattenLayout(
 type ReactionLabels = { name: string; meta: string };
 
 /**
- * Labels are needed before layout (to size the chevron) and after it (to draw
+ * Labels are needed before layout (to size the task card) and after it (to draw
  * them), so they are derived once here rather than computed twice.
  */
 function reactionLabels(snapshot: DiagramSnapshot): Map<string, ReactionLabels> {
@@ -448,16 +439,17 @@ function reactionLabels(snapshot: DiagramSnapshot): Map<string, ReactionLabels> 
   return new Map(
     snapshot.reactions.map((reaction) => {
       const owner = agents.get(reaction.agent);
-      const agent = owner?.name ?? reaction.agent;
+      // The agent's own name: the instance it belongs to is the box around it.
+      const agent = localName(owner?.name ?? reaction.agent, reaction.instance);
       // Which model is behind an agent changes how you read what it did, and
-      // the program picked it deliberately, so it belongs on the chevron.
+      // the program picked it deliberately, so it belongs on the task card.
       const detail = [owner?.backend, reaction.status]
         .filter(Boolean)
         .join(" \u00b7 ");
       // The runtime names reactions `reaction.N` because OMAR prompts are
       // anonymous, which makes a poor headline. Lead with the agent and let the
       // contract say what it writes; honour a real name if one ever arrives.
-      const generated = /^reaction\.\d+$/.test(reaction.name);
+      const generated = /(?:^|\.)reaction\.\d+$/.test(reaction.name);
       return [
         reaction.id,
         {
@@ -474,17 +466,120 @@ function textWidth(text: string, perChar: number): number {
   return text.length * perChar;
 }
 
+/**
+ * One line of what a task asks: its prompt's first sentence, with each
+ * `$(port)` read as the port's name. The card's width is set by the name and
+ * the model line, never by this; whatever does not fit ends in an ellipsis.
+ */
+export function summarisePrompt(prompt: string): string {
+  const flat = prompt
+    .replace(/\$\(([^)]*)\)/g, (_, port: string) => port.split(".").pop() ?? port)
+    .replace(/\s+/g, " ")
+    .trim();
+  const sentence = flat.match(/^(.*?[.!?])(?:\s|$)/)?.[1] ?? flat;
+  return sentence.replace(/[.!?:;,]+$/, "");
+}
+
+/** Cut to what a width holds at a per-character advance, ending in an ellipsis. */
+export function fitText(text: string, width: number, perChar: number): string {
+  const room = Math.max(1, Math.floor(width / perChar));
+  return text.length <= room ? text : `${text.slice(0, Math.max(0, room - 1)).trimEnd()}…`;
+}
+
+/**
+ * The model behind a task, as a mark on its card: a monochrome glyph for
+ * the backends OMAR knows, drawn in a 24-unit box, and an initial for one
+ * it does not. Not the vendors' artwork; a shape that reads as theirs.
+ */
+function BackendMark({ backend }: { backend: string }) {
+  const kind = backend.toLowerCase();
+  const stroke = { fill: "none", stroke: "currentColor", strokeWidth: 2.2, strokeLinecap: "round" as const, strokeLinejoin: "round" as const };
+  if (kind === "codex") {
+    // Six arcs about the centre: the interlocking ring.
+    return (
+      <g {...stroke} strokeWidth={2}>
+        {[0, 60, 120, 180, 240, 300].map((angle) => (
+          <path key={angle} d="M12 3.2 A8.8 8.8 0 0 1 19.6 7.6 L12 12 Z" transform={`rotate(${angle} 12 12)`} />
+        ))}
+      </g>
+    );
+  }
+  if (kind === "claude" || kind === "claudecode") {
+    // Rays from the centre: the sunburst.
+    return (
+      <g {...stroke} strokeWidth={2.4}>
+        {[0, 45, 90, 135, 180, 225, 270, 315].map((angle, i) => (
+          <path key={angle} d={`M12 12 L12 ${i % 2 === 0 ? 2.6 : 4.2}`} transform={`rotate(${angle} 12 12)`} />
+        ))}
+      </g>
+    );
+  }
+  if (kind === "cursor") {
+    // A cube seen from above.
+    return (
+      <g {...stroke}>
+        <path d="M12 2.5 L20.5 7.25 V16.75 L12 21.5 L3.5 16.75 V7.25 Z" />
+        <path d="M12 12 L20.5 7.25 M12 12 V21.5 M12 12 L3.5 7.25" />
+      </g>
+    );
+  }
+  if (kind === "opencode") {
+    return (
+      <g {...stroke}>
+        <path d="M4 6 L10 12 L4 18" />
+        <path d="M12 19 H20" />
+      </g>
+    );
+  }
+  if (kind === "pi") {
+    return (
+      <g {...stroke}>
+        <path d="M4 7 H20 M8 7 V19 M15.5 7 V17 Q15.5 19.5 18.5 19" />
+      </g>
+    );
+  }
+  if (kind === "antigravity" || kind === "agy") {
+    return (
+      <g {...stroke}>
+        <ellipse cx="12" cy="12" rx="9" ry="4.2" transform="rotate(-30 12 12)" />
+        <path d="M12 17 V5 M8.5 8.5 L12 5 L15.5 8.5" />
+      </g>
+    );
+  }
+  if (kind === "web") {
+    return (
+      <g {...stroke} strokeWidth={1.9}>
+        <circle cx="12" cy="12" r="9" />
+        <ellipse cx="12" cy="12" rx="4" ry="9" />
+        <path d="M3 12 H21" />
+      </g>
+    );
+  }
+  if (kind === "stub") {
+    return (
+      <g {...stroke} strokeWidth={2} strokeDasharray="3 2.6">
+        <circle cx="12" cy="12" r="8.5" />
+      </g>
+    );
+  }
+  return (
+    <text x="12" y="17" textAnchor="middle" fill="currentColor" fontSize="14" fontWeight="700">
+      {backend.slice(0, 1).toUpperCase()}
+    </text>
+  );
+}
+
 function reactionWidth(labels: ReactionLabels, within: number | null): number {
   const widest = Math.max(
     textWidth(labels.name, 6.9),
-    textWidth(labels.meta, 5.2),
+    textWidth(labels.meta, 5.2) + 22,
   );
   // A deadline is drawn between the text and the point, so the node has to be
   // wider for it rather than the stopwatch sitting on top of the name.
   const deadline = within === null ? 0 : WITHIN_ROOM;
   return clamp(
-    Math.ceil(REACTION_TEXT_X + widest + deadline + CHEVRON_NOTCH + 10),
-    REACTION_SIZE.width,
+    Math.ceil(REACTION_TEXT_X + widest + deadline + CARD_END_PADDING + 10),
+    REACTION_SIZE.width + deadline,
     REACTION_MAX_WIDTH,
   );
 }
@@ -817,13 +912,26 @@ function buildLayout(
 
   const labels = reactionLabels(snapshot);
   const web = webAgents(snapshot);
+  // Numbered within each team instance, in declaration order: the card says
+  // "01" for an instance's first task however many other instances precede it.
+  const localOrders = new Map<string, number>();
+  const perInstance = new Map<string, number>();
+  for (const reaction of [...snapshot.reactions].sort((a, b) => a.order - b.order)) {
+    const seen = perInstance.get(reaction.instance) ?? 0;
+    localOrders.set(reaction.id, seen);
+    perInstance.set(reaction.instance, seen + 1);
+  }
   const reactions: ReactionView[] = snapshot.reactions.map((reaction) => {
     const label = labels.get(reaction.id) ?? { name: reaction.name, meta: "" };
     return {
       id: reaction.id,
       order: reaction.order,
+      localOrder: localOrders.get(reaction.id) ?? reaction.order,
       name: label.name,
       meta: label.meta,
+      contract: reaction.contract,
+      summary: reaction.prompt ? summarisePrompt(reaction.prompt) : reaction.contract,
+      backend: snapshot.agents.find((agent) => agent.id === reaction.agent)?.backend ?? "Agent",
       status: reaction.status,
       box: nodeBoxes.get(reaction.id) ?? { x: 0, y: 0, ...REACTION_SIZE },
       agent: componentName(reaction.agent),
@@ -920,7 +1028,6 @@ function buildLayout(
   // edge drawn anywhere before it.
   const wrapped = new Map<string | null, number>();
   const deepestLane = new Map<string, number>();
-  const reactionIds = new Set(snapshot.reactions.map((reaction) => reaction.id));
   const edges: EdgeView[] = snapshot.edges.flatMap((edge) => {
     const points = edgePoints.get(edge.id);
     if (!points || points.length < 2) return [];
@@ -970,7 +1077,7 @@ function buildLayout(
     }
 
     const start = sourcePort ? 8 : 0;
-    const end = targetPort ? 9 : reactionIds.has(edge.target) ? -CHEVRON_NOTCH : 0;
+    const end = targetPort ? 9 : 0;
     const drawn = adjustEnds(squareOff(routed), start, end);
     // A delay is a fact about the connection, so it is written on it. Only for
     // connections: a trigger or an effect is a reaction's own wiring and has
@@ -1068,6 +1175,11 @@ function fitScale(layout: Layout, size: Size): number {
  * actually renders larger in the panel we have, biased towards the single row.
  */
 const WRAP_CANDIDATES = [3.0, 2.2, 1.6];
+// Tried only when none of those made a cut worth keeping: a chain of four
+// of the redesign's cards is tall enough that the looser ratios make no cut
+// at all and 1.6 cuts in front of the output port, while this wraps it
+// cleanly. Graphs that already wrap never pay for the extra run.
+const WRAP_FALLBACK = 1.2;
 const WRAP_GAIN = 1.08;
 
 /**
@@ -1098,7 +1210,7 @@ async function computeGeometry(
 
   let best = plain;
   let bestScale = fitScale(buildLayout(snapshot, declared, plain), size) * WRAP_GAIN;
-  for (const aspectRatio of WRAP_CANDIDATES) {
+  const attempt = async (aspectRatio: number) => {
     let candidate: ElkNode;
     let scale: number;
     try {
@@ -1117,12 +1229,18 @@ async function computeGeometry(
     } catch {
       // Wrapping is an optimisation, and ELK throws on some graphs — cyclic
       // ones especially. Losing a candidate is fine; losing the diagram is not.
-      continue;
+      return;
     }
     if (scale > bestScale) {
       best = candidate;
       bestScale = scale;
     }
+  };
+  for (const aspectRatio of WRAP_CANDIDATES) {
+    await attempt(aspectRatio);
+  }
+  if (best === plain) {
+    await attempt(WRAP_FALLBACK);
   }
   return { declared, elk: best };
 }
@@ -1208,6 +1326,7 @@ export function DiagramCanvas({
   snapshot,
   selection = [],
   onToggleComponent,
+  onInspectComponent,
   onOpenTerminal,
   onOpenPanel,
   highlight,
@@ -1215,6 +1334,7 @@ export function DiagramCanvas({
   snapshot: DiagramSnapshot;
   selection?: string[];
   onToggleComponent?: (component: string) => void;
+  onInspectComponent?: (component: string) => void;
   /** Given only while agents are actually running and can be attached to. */
   onOpenTerminal?: (agent: string) => void;
   /** A web agent has no pane, so its double-click opens its panel instead. */
@@ -1230,6 +1350,7 @@ export function DiagramCanvas({
   const [layout, setLayout] = useState<Layout | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [size, setSize] = useState<Size>({ width: 0, height: 0 });
+  const sized = size.width > 0 && size.height > 0;
   const [userView, setUserView] = useState<Viewport | null>(null);
   const dragRef = useRef<{ x: number; y: number; view: Viewport } | null>(null);
   // The glide reads the live view without re-creating itself on every frame.
@@ -1237,6 +1358,11 @@ export function DiagramCanvas({
   const glideRef = useRef(0);
   // A click that panned the canvas is not a click on what sits under it.
   const draggedRef = useRef(false);
+  const inspectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cancelInspection = () => {
+    if (inspectTimerRef.current !== null) clearTimeout(inspectTimerRef.current);
+  };
+  useEffect(() => () => { if (inspectTimerRef.current !== null) clearTimeout(inspectTimerRef.current); }, [snapshot.team]);
   const selected = useMemo(() => new Set(selection), [selection]);
 
   // A countdown is the one reading on the canvas that moves between tags,
@@ -1269,6 +1395,9 @@ export function DiagramCanvas({
   function handleNodeClick(component: string) {
     if (draggedRef.current) return;
     onToggleComponent?.(component);
+    cancelInspection();
+    // Let double-click retain its terminal/panel action before opening details.
+    inspectTimerRef.current = setTimeout(() => onInspectComponent?.(component), 250);
   }
 
   /** Props that make a node selectable, or just its class when selection is off. */
@@ -1280,10 +1409,18 @@ export function DiagramCanvas({
     const component = componentName(id);
     return {
       className: `${base}${lit}${selected.has(component) ? " selected" : ""}`,
+      role: "button",
+      tabIndex: 0,
+      "aria-label": `Inspect ${component}`,
+      "aria-pressed": selected.has(component),
       onClick: () => handleNodeClick(component),
+      onKeyDown: (event: { key: string; preventDefault: () => void }) => {
+        if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onToggleComponent?.(component); onInspectComponent?.(component); }
+      },
       // The canvas resets the view on double click; a node has its own meaning.
-      onDoubleClick: (event: { stopPropagation: () => void }) =>
-        event.stopPropagation(),
+      onDoubleClick: (event: { stopPropagation: () => void }) => {
+        event.stopPropagation(); cancelInspection();
+      },
     };
   }
 
@@ -1310,8 +1447,12 @@ export function DiagramCanvas({
 
     // Same shape as what is already drawn: the values moved and nothing else,
     // so redraw from the geometry in hand rather than asking ELK for it again.
+    // A layout worked out before the host had a size could not wrap, since
+    // wrapping fits the panel; it is keyed as such so the first measurement
+    // asks ELK again rather than keeping a single row for good.
+    const key = sized ? shape : `${shape}|unsized`;
     const drawn = geometryRef.current;
-    if (drawn?.key === shape) {
+    if (drawn?.key === key) {
       try {
         setLayout(buildLayout(snapshot, drawn.geometry.declared, drawn.geometry.elk));
         setError(null);
@@ -1324,7 +1465,7 @@ export function DiagramCanvas({
     computeGeometry(snapshot, sizeRef.current)
       .then((geometry) => {
         if (cancelled) return;
-        geometryRef.current = { key: shape, geometry };
+        geometryRef.current = { key, geometry };
         setLayout(buildLayout(snapshot, geometry.declared, geometry.elk));
         const structure = structureKey(snapshot);
         if (structureRef.current !== structure) {
@@ -1340,7 +1481,7 @@ export function DiagramCanvas({
     return () => {
       cancelled = true;
     };
-  }, [snapshot, shape]);
+  }, [snapshot, shape, sized]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -1488,7 +1629,7 @@ export function DiagramCanvas({
     <div className="diagram-wrap" ref={hostRef}>
       <svg
         className="diagram-canvas"
-        role="img"
+        role="group"
         aria-label={`Live topology diagram for ${snapshot.team}`}
         onWheel={handleWheel}
         onPointerDown={handlePointerDown}
@@ -1670,19 +1811,20 @@ export function DiagramCanvas({
                     // attach to, so what opens is the panel it is answered
                     // through — the same gesture, the thing that is there.
                     event.stopPropagation();
+                    cancelInspection();
                     if (reaction.web) onOpenPanel?.(reaction.agent);
                     else onOpenTerminal?.(reaction.agent);
                   }}
                   transform={`translate(${reaction.box.x},${reaction.box.y})`}
                 >
-                  <polygon
-                    className="omar-reaction-body"
-                    points={chevronPoints(reaction.box.width, reaction.box.height)}
-                  />
+                  <rect className="omar-reaction-body" width={reaction.box.width} height={reaction.box.height} rx={9} />
+                  <path className="omar-reaction-accent" d={`M9 1.5 H${reaction.box.width - 9}`} />
+                  <circle className="node-connection" cx={0} cy={reaction.box.height / 2} r={4} />
+                  <circle className="node-connection" cx={reaction.box.width} cy={reaction.box.height / 2} r={4} />
                   <rect
                     className="omar-reaction-badge"
                     x={17}
-                    y={reaction.box.height / 2 - 10}
+                    y={22}
                     width={20}
                     height={20}
                     rx={5}
@@ -1691,25 +1833,26 @@ export function DiagramCanvas({
                   <text
                     className="omar-reaction-index"
                     x={27}
-                    y={reaction.box.height / 2 + 4}
+                    y={36}
                     textAnchor="middle"
                   >
-                    {reaction.order + 1}
+                    {String(reaction.localOrder + 1).padStart(2, "0")}
                   </text>
                   <text
                     className="omar-reaction-name"
                     x={REACTION_TEXT_X}
-                    y={reaction.box.height / 2 - 2}
+                    y={29}
                   >
                     {reaction.name}
                   </text>
-                  <text
-                    className="omar-reaction-meta"
-                    x={REACTION_TEXT_X}
-                    y={reaction.box.height / 2 + 12}
-                  >
-                    {reaction.meta}
+                  <text className="omar-reaction-description" x={REACTION_TEXT_X} y={46}>
+                    {fitText(reaction.summary, reaction.box.width - REACTION_TEXT_X - CARD_END_PADDING, 5.6)}
                   </text>
+                  <rect className="omar-model-badge" x={REACTION_TEXT_X} y={57} width={16} height={16} rx={5} />
+                  <g className="omar-model-mark" transform={`translate(${REACTION_TEXT_X + 2} 59) scale(0.5)`}>
+                    <BackendMark backend={reaction.backend} />
+                  </g>
+                  <text className="omar-reaction-meta" x={REACTION_TEXT_X + 22} y={68}>{reaction.meta}</text>
                   {/* A deadline the program set for itself. A stopwatch rather
                       than a clock: a timer fires on its own, this counts down
                       against work already running. */}
@@ -1717,7 +1860,7 @@ export function DiagramCanvas({
                     <g
                       className="omar-within"
                       transform={`translate(${
-                        reaction.box.width - CHEVRON_NOTCH - WITHIN_ROOM / 2
+                        reaction.box.width - CARD_END_PADDING - WITHIN_ROOM / 2
                       },${reaction.box.height / 2})`}
                     >
                       <title>{`must answer within ${formatDuration(reaction.within)}`}</title>
@@ -1806,19 +1949,13 @@ export function DiagramCanvas({
         </span>
         <span>
           <svg viewBox="0 0 18 12" aria-hidden="true">
-            <polygon
-              className="omar-reaction-body"
-              points="0,1 13,1 18,6 13,11 0,11 4,6"
-            />
+            <rect className="omar-reaction-body" x="1" y="1" width="16" height="10" rx="2" />
           </svg>
           reaction
         </span>
         <span>
           <svg viewBox="0 0 18 12" aria-hidden="true">
-            <polygon
-              className="omar-reaction-body running"
-              points="0,1 13,1 18,6 13,11 0,11 4,6"
-            />
+            <rect className="omar-reaction-body running" x="1" y="1" width="16" height="10" rx="2" />
           </svg>
           running
         </span>

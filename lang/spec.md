@@ -7,9 +7,9 @@ Source extension: `.omar`
 ## 1. Purpose
 
 OMAR is a declarative language for agent systems. A program defines agents,
-typed ports, and prompt reactions. The language controls topology startup,
+typed ports, and tasks. The language controls topology startup,
 teardown, and mutation. A deterministic runtime coordinates the running system.
-AI is used only inside prompt reactions, never for orchestration.
+AI is used only inside tasks, never for orchestration.
 
 ## 2. Syntax
 
@@ -29,7 +29,7 @@ main        = "main", [ identifier ], "{", { instance | wiring }, "}" ;
 wiring      = qualified, "->", qualified, [ "after", delay ] ;
 
 declaration = input | output | action | timer | state | instance
-            | connection | prompt | reaction | ";" ;
+            | connection | task | reaction | ";" ;
 input       = "input", identifier, ":", type ;
 output      = "output", identifier, ":", type ;
 action      = "action", identifier, [ "(", "delay", "=", delay, ")" ],
@@ -44,7 +44,7 @@ connection  = endpoint, "->", endpoint, [ "after", delay ] ;
 endpoint    = identifier | qualified ;
 qualified   = identifier, ".", identifier ;
 
-prompt      = "prompt", identifier, "(", [ triggers ], ")",
+task        = "task", identifier, "(", [ triggers ], ")",
               "->", effects, [ deadline ], string ;
 reaction    = "reaction", "(", [ triggers ], ")", "->", effects,
               [ deadline ], code-body ;
@@ -83,7 +83,7 @@ team Node(idx : int)[agent : Codex]
     input token : int
     output out : int
 
-    prompt agent(token) -> out "You are node $(idx). Token: $(token)"
+    task agent(token) -> out "You are node $(idx). Token: $(token)"
 }
 
 main Relay {
@@ -118,7 +118,7 @@ team Stage(role : string)[worker : Codex]
     input inp : string
     output out : string
 
-    prompt worker(inp) -> out "You are the $(role) stage. Got $(inp)."
+    task worker(inp) -> out "You are the $(role) stage. Got $(inp)."
 }
 
 team Pipeline[reporter : Codex]
@@ -132,7 +132,7 @@ team Pipeline[reporter : Codex]
     brief -> draft.inp
     draft.out -> refine.inp
 
-    prompt reporter(refine.out) -> summary "Report $(refine.out)."
+    task reporter(refine.out) -> summary "Report $(refine.out)."
 }
 
 main Nest {
@@ -166,12 +166,12 @@ not accepted in `main`.
 - `a -> b after 3s` copies it three seconds later.
 - `timer t(1s, 500ms)` fires at one second and every five hundred milliseconds
   after that. A period of `0` fires once, at the offset.
-- `prompt agent(a, b)` declares a reaction on `agent` triggered when port `a`
-  or port `b` is present. If both are present at the same tag, the reaction is
+- `task agent(a, b)` declares a task for `agent`, triggered when port `a`
+  or port `b` is present. If both are present at the same tag, the task is
   invoked once with both values.
 
-The prompt body is delivered to the agent. `$(name)` interpolates a trigger
-value and may only reference that prompt's triggers. If a declared trigger is
+The task's prompt is delivered to the agent. `$(name)` interpolates a trigger
+value and may only reference that task's triggers. If a declared trigger is
 not present in an invocation, its interpolation expands to `<absent>`.
 
 - `reaction(a, b) -> effects {= ... =}` declares a reaction that runs Rust
@@ -265,7 +265,7 @@ team
 agents
 typed ports
 port connections
-prompt reactions in declaration order
+tasks in declaration order
 ```
 
 The runtime derives a port-to-reaction subscription index from reaction
@@ -520,8 +520,8 @@ Reaction fields are ordered:
 op, id, agent, triggers, effects, contract, prompt, body, within
 ```
 
-`body` is a reaction's Rust and is omitted for a prompt; `agent` is empty
-for a reaction. `within` is nanoseconds, and is omitted when the reaction
+`body` is a code reaction's Rust and is omitted for a task; `agent` is empty
+for a code reaction. `within` is nanoseconds, and is omitted when the reaction
 declares no deadline.
 
 The VM verifies the complete plan before performing effects. Unknown
@@ -559,7 +559,7 @@ type Decision from "./schemas/decision.json"
 team Review[reviewer : Codex] {
     input request : string
     output decision : Decision
-    prompt reviewer(request) -> decision "Review $(request)"
+    task reviewer(request) -> decision "Review $(request)"
 }
 main { review = Review() }
 ```
@@ -609,7 +609,7 @@ A Rust code reaction may read an enum port: the value it receives was checked
 against the enum when it was written, and the body sees it as a `String`. It
 cannot write one, because the generated Rust `String` does not enforce enum
 membership; the compiler and the bytecode verifier both reject it. Write such a
-port from an agent prompt. A code reaction carries scalars only, so a `list` or
+port from a task. A code reaction carries scalars only, so a `list` or
 `option` port, enum or not, cannot be its trigger or effect; the compiler says
 so rather than leaving it to the verifier.
 
@@ -651,7 +651,7 @@ team Check[reviewer : Codex]
     output ready : string
     output revise : string
 
-    prompt reviewer(draft) -> (ready | revise) within(60s)
+    task reviewer(draft) -> (ready | revise) within(60s)
         jev("artifact-requirement-v1", "The opening identifies the founder and the event.",
             appears_satisfied: ready, partially_satisfied: revise, not_satisfied: revise)
         "Review only the stated requirement using the supplied draft."

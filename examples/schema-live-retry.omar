@@ -4,7 +4,7 @@ team Review[schema_tester : Codex] {
     input request : string
     output decision : Decision
     output explanation : string
-    prompt schema_tester(request) -> decision, explanation "
+    task schema_tester(request) -> decision, explanation "
         This is an integration test of the decision schema, not a production review.
         Request: $(request)
         First call omar_set_port for review.decision with the exact invalid value

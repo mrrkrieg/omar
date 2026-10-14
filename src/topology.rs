@@ -4525,7 +4525,7 @@ mod tests {
             team Review[reviewer : Codex] {
                 input request : string
                 output decision : Decision
-                prompt reviewer(request) -> decision "Review $(request)"
+                task reviewer(request) -> decision "Review $(request)"
             }
             main { review = Review() }
         "#,
@@ -4596,7 +4596,7 @@ mod tests {
                 team Review[reviewer : Codex] {{
                     input request : string
                     output decision : Decision
-                    prompt reviewer(request) -> decision "Review $(request)"
+                    task reviewer(request) -> decision "Review $(request)"
                 }}
                 main {{ review = Review() }}
             "#
@@ -4644,7 +4644,7 @@ mod tests {
             team Review[reviewer : Codex] {
                 input request : string
                 output decision : Decision
-                prompt reviewer(request) -> decision "Review $(request)"
+                task reviewer(request) -> decision "Review $(request)"
             }
             main { review = Review() }
         "#;

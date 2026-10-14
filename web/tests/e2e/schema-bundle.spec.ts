@@ -16,7 +16,7 @@ test("builder carries the reviewed schema bundle into validation and deployment"
     await expect(page.getByLabel("Describe a workflow")).toBeEnabled();
     const checked = page.waitForRequest((event) => event.url().endsWith("/v1/programs/check") && event.postDataJSON().program === program);
     const proposed = await request.post(`${fake.url}/v1/agent/proposals`, { data: {
-      token: fake.agentToken, summary: "Choose with Jev; reason below 95%.", program, files, inputs: { "review.request": "Original request ✅" },
+      token: fake.agentToken, summary: "Choose with Jev; reason below 95%.", program, files, inputs: { "checks.request": "Original request ✅" },
     } });
     expect(proposed.ok()).toBe(true);
     expect((await checked).postDataJSON().files).toEqual(files);
@@ -30,7 +30,7 @@ test("builder carries the reviewed schema bundle into validation and deployment"
     const deployed = page.waitForRequest((event) => event.url().endsWith("/v1/runs") && event.method() === "POST");
     await page.getByRole("button", { name: "Deploy", exact: true }).click();
     await page.getByRole("button", { name: "Confirm deploy", exact: true }).click();
-    expect((await deployed).postDataJSON()).toMatchObject({ program, files, inputs: { "review.request": "Original request ✅" } });
+    expect((await deployed).postDataJSON()).toMatchObject({ program, files, inputs: { "checks.request": "Original request ✅" } });
     await expect(page.getByRole("button", { name: "Confirm deploy", exact: true })).toHaveCount(0);
     await page.setViewportSize({ width: 390, height: 844 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);

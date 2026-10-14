@@ -144,11 +144,41 @@ Shutdown the test project and its agents.
 | [Pi](https://pi.dev) | `omar -a pi up` |
 
 Each `omar -a <backend> up` starts a new independent session with EA 0.
-Add `--name dev` to name it, `--tui` or `--web` to attach at once, and
-`--checkpoint` to keep its state after `omar down` (otherwise nothing is left). Add another EA inside it
+Add `--name dev` to name it, and `--tui` or `--web` to attach at once.
+Sessions work like containers: `omar down` stops one and keeps its state,
+`omar up --name dev` starts it again, and `omar rm` removes it (a running one
+is killed first). Add another EA inside it
 with `omar --session dev ea create --name Research --agent codex`.
 Target it with `omar --session dev --ea Research ...`; this does not change
-another client's selection.
+another client's selection. `omar run team.omar -s dev` admits a workflow and
+returns; `--fg` keeps it in the foreground until it ends and prints the final
+record, and Ctrl-C detaches without stopping it. Without a session, `run`
+creates one for the workflow and removes it again when a foreground run ends.
+Checkpointing belongs to the workflow: `--checkpoint-period` on `run`, and
+the `omar checkpoint` commands while it runs.
+
+### Upgrading omar with sessions running
+
+The package manager replaces the binary; omar has no upgrade command. A
+running session keeps executing the build it started with, so moving it to
+the new build is a restart of that session, with its workflows paused across
+it:
+
+```
+omar pause Ticker --wait -s dev   # checkpoint and park the workflows you care about
+brew upgrade omar                 # or the install script
+omar down -s dev                  # workflows still running pause at their next tag boundary
+omar up --name dev                # the same session, on the new build, at its previous URL
+omar resume Ticker -s dev         # continues from the checkpoint; the run keeps its id
+```
+
+`omar ls` shows each session's workflows (`1 running, 1 paused`), for stopped
+sessions too. `omar up --name` on a stopped session reports the build it
+moved to and the paused workflows waiting for `omar resume`; nothing resumes
+on its own. A forced stop (`down
+--force`, a crash) leaves a workflow interrupted mid-run: the restart pauses
+it at its last checkpoint, and the tags since are lost. Other sessions are
+never touched.
 
 Codex launch commands no longer disable the alternate screen. OMAR does not
 add `--no-alt-screen`; an explicit flag in a custom command is still respected.

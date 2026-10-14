@@ -678,7 +678,7 @@ private partial def parseDeclarations
       let (args, rest) ← parseArgs #[] rest
       parseDeclarations aliases reactionIndex ports timers connections reactions
         (instances.push { name, team, args }) states rest
-  | Token.word "prompt" :: rest => do
+  | Token.word "task" :: rest => do
       let (agent, rest) ← word rest
       let (_, rest) ← expectSym "(" rest
       let (triggers, rest) ← parseDependencies #[] rest
@@ -697,7 +697,7 @@ private partial def parseDeclarations
       let (decision, rest) ← parseDecision rest
       let (prompt, rest) ← match rest with
         | Token.text prompt :: tail => pure (prompt, tail)
-        | _ => throw "expected prompt string after production contract"
+        | _ => throw "expected the task's prompt string after the production contract"
       let effects := productionTargets contractTokens
       let contract := String.intercalate " " (contractTokens.map tokenSource)
       let reaction := {
@@ -705,7 +705,7 @@ private partial def parseDeclarations
         agent, triggers, effects, contract, prompt, within, decision
       }
       parseDeclarations aliases (reactionIndex + 1) ports timers connections (reactions.push reaction) instances states rest
-  -- `prompt` asks an agent, `reaction` just runs, so a reaction names none.
+  -- `task` asks an agent, `reaction` just runs, so a reaction names none.
   | Token.word "reaction" :: rest => do
       let (_, rest) ← expectSym "(" rest
       let (triggers, rest) ← parseDependencies #[] rest

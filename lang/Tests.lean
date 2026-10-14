@@ -229,7 +229,7 @@ def nodeTeam : String :=
   "team Node(idx : int)[agent : Codex] {
      input token : int
      output out : int
-     prompt agent(token) -> out \"node $(idx) got $(token)\"
+     task agent(token) -> out \"node $(idx) got $(token)\"
    }"
 
 /-- One reaction carrying whatever deadline the caller writes. -/
@@ -237,7 +237,7 @@ def deadlineTeam (deadline : String) : String :=
   "team Desk[a : Codex] {
      input req : string
      output res : string
-     prompt a(req) -> res? within(" ++ deadline ++ ") \"do it\"
+     task a(req) -> res? within(" ++ deadline ++ ") \"do it\"
    }
    main { d = Desk() }"
 
@@ -255,7 +255,7 @@ def testWithin : IO Unit := do
     | .error message => throw (IO.userError s!"within {written}: {message}")
   -- No deadline is not a zero deadline: the run-wide timeout still applies.
   let plain := "team Desk[a : Codex] { input req : string output res : string
-                prompt a(req) -> res \"go\" } main { d = Desk() }"
+                task a(req) -> res \"go\" } main { d = Desk() }"
   match lex plain >>= parse "Desk" with
   | .ok program =>
       assertEqual "no deadline" (program.reactions.all (·.within == none)) true
@@ -422,7 +422,7 @@ def testExternalSchemas : IO Unit := do
   let schema := "{\"type\":\"string\",\"enum\":[\"approved\",\"needs_revision\"]}"
   let source := "type Decision from \"schemas/decision.json\"\n" ++
     "team Review[Decision : Codex] { input Decision : Decision " ++
-    "output out : list<option<Decision>> prompt Decision(Decision) -> out \"Review $(Decision)\" } " ++
+    "output out : list<option<Decision>> task Decision(Decision) -> out \"Review $(Decision)\" } " ++
     "main { review = Review() }"
   let bytecode ← match compileSourceWithSchemas "Review" source #[ ("schemas/decision.json", schema) ] with
     | .ok bytecode => pure bytecode
@@ -544,7 +544,7 @@ def testSchemaTypeResolution : IO Unit := do
   let contents := "{\"type\":\"string\",\"enum\":[\"continue\",\"stop\"]}"
   -- A schema and a backend occupy distinct namespaces.
   let collision := "type Codex from \"s.json\"; team T[worker : Codex] { " ++
-    "input token : Codex output out : Codex prompt worker(token) -> out \"Forward\" } main { t = T() }"
+    "input token : Codex output out : Codex task worker(token) -> out \"Forward\" } main { t = T() }"
   match compileSourceWithSchemas "Names" collision #[ ("s.json", contents) ] with
   | .ok _ => pure ()
   | .error error => throw (IO.userError s!"schema/backend collision: {error}")
@@ -567,7 +567,7 @@ def testSchemaTypeResolution : IO Unit := do
 def testDecisionGate : IO Unit := do
   let source := "team Check(requirement : string)[reviewer : Codex] {
     input evidence : string output ready : string output revise : string
-    prompt reviewer(evidence) -> (ready | revise) within(30s)
+    task reviewer(evidence) -> (ready | revise) within(30s)
       jev(\"artifact-requirement-v1\", \"$(requirement)\",
           appears_satisfied: ready, partially_satisfied: revise, not_satisfied: revise)
       \"Check the requirement; return the original evidence.\"

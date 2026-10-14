@@ -51,7 +51,7 @@ team Check[reviewer : Codex]
     output ready : string
     output revise : string
 
-    prompt reviewer(draft) -> (ready | revise) within(60s)
+    task reviewer(draft) -> (ready | revise) within(60s)
         jev("artifact-requirement-v1", "The opening identifies the founder and the event.",
             appears_satisfied: ready, partially_satisfied: revise, not_satisfied: revise)
         "Review only the stated requirement using the supplied draft."

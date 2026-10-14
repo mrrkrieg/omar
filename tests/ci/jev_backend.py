@@ -13,13 +13,13 @@ team Review[reviewer : Jev] {
     input request : string
     output out : Decision
     output evidence : string
-    prompt reviewer(request) -> out, evidence "Choose continue, stop, or defer."
+    task reviewer(request) -> out, evidence "Choose continue, stop, or defer."
 }
 team Followup[worker : Stub] {
     input decision : Decision
     input evidence : string
     output note : string
-    prompt worker(decision, evidence) -> note "Read the checked decision and evidence."
+    task worker(decision, evidence) -> note "Read the checked decision and evidence."
 }
 main JevBackendTest {
     review = Review()
@@ -95,7 +95,7 @@ class JevBackendTests(unittest.TestCase):
                 env["OMAR_HOME"] = tempfile.mkdtemp(prefix="omar-jev-adapter-test-")
                 message = "test request" + ("x" * 65536 if mode == "blocked_input" else "")
                 result = subprocess.run([str(REPO / "target/debug/omar"), "run", str(temp / "workflow.omar"),
-                    "--input", "review.request=" + message, "--timeout-seconds", "30", "--fast", "--wait"],
+                    "--input", "review.request=" + message, "--timeout-seconds", "30", "--fast", "--fg"],
                     env=env, text=True, capture_output=True, timeout=60)
                 session = re.search(r"Started session ([\w-]+)", result.stderr)
                 if session:
@@ -139,7 +139,7 @@ class JevBackendTests(unittest.TestCase):
 team Review[reviewer : Jev] {
     input request : string
     output out : Decision
-    prompt reviewer(request) -> out "Choose an option."
+    task reviewer(request) -> out "Choose an option."
 }
 main JevConfigurationTest { review = Review() }
 '''
@@ -157,7 +157,7 @@ main JevConfigurationTest { review = Review() }
                 env["OMAR_JEV_ON_ERROR"] = "bad" if mode == "bad_policy" else "defer"
                 if mode == "empty_model": env["OMAR_JEV_MODEL"] = " "
                 result = subprocess.run([str(REPO / "target/debug/omar"), "run", str(temp / "workflow.omar"),
-                    "--input", "review.request=test", "--timeout-seconds", "30", "--fast", "--wait"],
+                    "--input", "review.request=test", "--timeout-seconds", "30", "--fast", "--fg"],
                     env=env, text=True, capture_output=True, timeout=60)
                 session = re.search(r"Started session ([\w-]+)", result.stderr)
                 if session:
@@ -170,7 +170,7 @@ main JevConfigurationTest { review = Review() }
                 self.assertFalse((temp / "called").exists())
 
     def test_full_schema_flow_at_and_below_95_percent(self):
-        cases = [
+        cases = [(*case, "continue") for case in [
             ("boundary", "continue", .95, .95, .95, False, "continued"),
             ("above", "continue", .99, .99, .99, False, "continued"),
             ("negative", "stop", .99, .99, .99, False, "repair"),
@@ -179,14 +179,23 @@ main JevConfigurationTest { review = Review() }
             ("low_sufficiency", "stop", .99, .99, .949999, True, "continued"),
             ("uncertain", "defer", .99, .99, .99, True, "continued"),
             ("service_error", "continue", .99, .99, .99, True, "continued"),
-        ]
-        for mode, choice, confidence, probability, sufficiency, fallback, branch in cases:
+        ]]
+        cases.extend([
+            ("reasoning_revise", "continue", .949999, .99, .99, True, "repair", "stop"),
+            ("reasoning_unresolved", "continue", .949999, .99, .99, True, "blocked", "defer"),
+            ("deterministic_empty", "continue", .99, .99, .99, False, "repair", "continue"),
+            ("deterministic_oversize", "continue", .99, .99, .99, False, "repair", "continue"),
+        ])
+        for mode, choice, confidence, probability, sufficiency, fallback, branch, reasoned_choice in cases:
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
                 temp = Path(directory)
                 (temp / "schemas").mkdir()
-                (temp / "schemas/jev-decision.json").write_text((REPO / "examples/schemas/jev-decision.json").read_text())
-                # Deterministic model fixture: Stub chooses the first schema value
-                # (continue). Its output must only appear on escalated invocations.
+                # The fixture reasoner selects the first valid schema value.
+                # Order changes only its deterministic answer, never the allowed set.
+                values = [reasoned_choice] + [value for value in ["continue", "stop", "defer"] if value != reasoned_choice]
+                (temp / "schemas/jev-decision.json").write_text(json.dumps({"type":"string", "enum":values}))
+                # Replace only the reasoning backend with a deterministic model
+                # fixture. Its output must only appear on escalated invocations.
                 program = (REPO / "examples/jev-review.omar").read_text().replace("reasoner : Codex", "reasoner : Stub")
                 (temp / "workflow.omar").write_text(program)
                 others = [value for value in ["continue", "stop", "defer"] if value != choice]
@@ -212,14 +221,20 @@ main JevConfigurationTest { review = Review() }
                 env["OMARC_BIN"] = str(REPO / "lang/.lake/build/bin/omarc")
                 env["OMAR_HOME"] = str(temp / "home")
                 message = "Complete request including Unicode ✅ and literal $(not_a_trigger)."
+                if mode == "deterministic_empty": message = " "
+                if mode == "deterministic_oversize": message = "x" * (16 * 1024 + 1)
+                deterministic_failure = mode.startswith("deterministic_")
                 result = subprocess.run([str(REPO / "target/debug/omar"), "run", str(temp / "workflow.omar"),
-                    "--input", "review.request=" + message, "--timeout-seconds", "30", "--fast", "--wait"],
+                    "--input", "checks.request=" + message, "--timeout-seconds", "30", "--fast", "--fg"],
                     env=env, text=True, capture_output=True, timeout=90)
                 session = re.search(r"Started session ([\w-]+)", result.stderr)
                 if session:
                     subprocess.run([str(REPO / "target/debug/omar"), "down", "-s", session.group(1)], env=env, capture_output=True, timeout=30)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                self.assertEqual((temp / "calls").read_text().splitlines(), ["call"])
+                calls = (temp / "calls").read_text().splitlines() if (temp / "calls").exists() else []
+                self.assertEqual(calls, [] if deterministic_failure else ["call"])
+                self.assertEqual('Output checks.invalid = ' in result.stdout, deterministic_failure)
+                self.assertEqual('Output review.out = ' in result.stdout, not deterministic_failure)
                 self.assertEqual('Output reasoning.decision = ' in result.stdout, fallback)
                 self.assertEqual('Output decider.needs_review = ' in result.stdout, fallback)
                 self.assertIn(f'Output next.{branch} = ', result.stdout)
@@ -227,7 +242,15 @@ main JevConfigurationTest { review = Review() }
                     self.assertNotIn(f'Output next.{other} = ', result.stdout)
                 line = next(line for line in result.stdout.splitlines() if line.startswith(f'Output next.{branch} = '))
                 evidence = json.loads(json.loads(line.split(' = ', 1)[1]))
-                self.assertEqual(evidence['context'], {'review.request': message})
+                self.assertEqual(evidence['context'], {'checks.request' if deterministic_failure else 'review.request': message})
+                if fallback:
+                    self.assertEqual(evidence['reasoning']['outcome'], reasoned_choice)
+                    self.assertTrue(evidence['reasoning']['reason'])
+                if branch == "blocked":
+                    self.assertEqual(evidence['error']['kind'], 'unresolved_reasoning')
+                    self.assertTrue(evidence['error']['message'])
+                if deterministic_failure:
+                    self.assertEqual(evidence['error']['kind'], 'deterministic_check')
                 self.assertNotIn('fixture-not-a-real-key', result.stdout + result.stderr)
                 self.assertNotIn('private-service-error', result.stdout + result.stderr)
 

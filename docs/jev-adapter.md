@@ -16,7 +16,7 @@ team Review[reviewer : Jev]
     input request : string
     output out : Decision
     output evidence : string
-    prompt reviewer(request) -> out, evidence
+    task reviewer(request) -> out, evidence
     "Choose continue if the request can proceed; stop if it cannot; defer if unsure."
 }
 main JevReview { review = Review() }
@@ -81,17 +81,20 @@ remain entirely in the workflow's Rust reaction, independent of transport errors
 
 ## Example
 
-`examples/jev-review.omar` imports `schemas/jev-decision.json` and passes the enum
-and evidence to a Rust gate. Its inclusive >=0.95 threshold checks all three scores. Confident continue/stop
+`examples/jev-review.omar` starts with the complete output of an upstream step.
+Its deterministic code check sends empty or oversized output directly to repair,
+without calling Jev or reasoning. Workflow-specific schema, file, test and count
+checks belong at this same stage. Passing output reaches Jev, which imports
+`schemas/jev-decision.json` and passes the enum and evidence to a Rust gate. Its inclusive >=0.95 threshold checks all three scores. Confident continue/stop
 choices route directly; all other choices reach the configured Codex reasoning
 team. Only the resolved decision reaches `next`, which continues, repairs, or
-blocks. Original context is retained on every path. Thresholds need evaluation
+blocks with the reasoning model's explanation. Original context is retained on every path. Thresholds need evaluation
 on your real tasks; fixture tests prove routing, not model calibration.
 
 ```sh
 export TYPESAFE_API_KEY
 export OMAR_JEV_ON_ERROR=defer  # optional; default is fail
-omar run examples/jev-review.omar --input "review.request=Example request" --wait
+omar run examples/jev-review.omar --input "checks.request=Example request" --fg
 ```
 
 Generated Rust reaction crates enable serde_json when a body references it. The
@@ -121,3 +124,22 @@ For arbitrary imported choice enums, use the native backend and an explicit
 confidence gate as in `jev-review.omar`. Do not put a second Jev gate on its
 reasoning fallback. Native service-error fallback requires
 `OMAR_JEV_ON_ERROR=defer`; without it the invocation fails closed.
+
+## Reference sequence
+
+The reference workflow implements these branches:
+
+| Decision | Path |
+| --- | --- |
+| Deterministic check fails | Repair; zero Jev or reasoning calls |
+| Jev confidence, selected probability and sufficiency are all >= 0.95; positive | Next step |
+| The same three scores qualify; negative | Repair |
+| Any score is below 0.95, the choice is uncertain, or the provider fails under defer policy | Reasoning before any downstream branch |
+| Reasoning chooses continue | Next step, retaining its explanation |
+| Reasoning chooses revise/stop | Repair, retaining its explanation |
+| Reasoning remains unresolved or supplies no explanation | Terminal blocked output with a reason; no next-step or repair output |
+
+The workflow builder must declare the deterministic checks that fit each task.
+Enabling Jev does not add guessed checks to existing workflows. For annotated
+`jev(...)` gates, unresolved reasoning fails the run with the reason and starts
+no downstream branch. In the native reference flow it ends on `next.blocked`.

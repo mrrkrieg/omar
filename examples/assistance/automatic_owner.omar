@@ -5,7 +5,7 @@ team Route[router : ClaudeCode]
     output frontend : string
     output coordinator : string
 
-    prompt router(finding) -> (backend | frontend | coordinator) within(60s)
+    task router(finding) -> (backend | frontend | coordinator) within(60s)
         jev("review-owner-v1", "Which declared responsibility owns resolving this finding?",
             backend: backend "Server behavior and HTTP validation",
             frontend: frontend "Browser rendering and interactions",

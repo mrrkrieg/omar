@@ -19,7 +19,7 @@ export type TokenKind =
 
 export type Token = { kind: TokenKind; text: string };
 
-const KEYWORDS = new Set(["team", "input", "output", "action", "prompt", "jev"]);
+const KEYWORDS = new Set(["team", "input", "output", "action", "task", "jev"]);
 const TYPES = new Set([
   "bool",
   "int",

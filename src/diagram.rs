@@ -176,6 +176,11 @@ pub struct DiagramReaction {
     /// operator to read it out of the source.
     #[serde(default)]
     pub within: Option<u64>,
+    /// The task's prompt, for a one-line summary on its card. `None` for a
+    /// code reaction.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub prompt: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -308,6 +313,7 @@ impl DiagramSnapshot {
                 invocation_id: None,
                 instance: reaction.instance.clone(),
                 within: reaction.within,
+                prompt: (!reaction.prompt.is_empty()).then(|| reaction.prompt.clone()),
             })
             .collect();
         let mut edges = Vec::new();
@@ -505,6 +511,12 @@ impl TopologyObserver for DiagramPublisher {
             |snapshot| {
                 snapshot.current_tag = Some(tag);
                 snapshot.lag = Some(lag);
+                // A new tag: what ran at the last one is history. A task
+                // reads idle until it fires again.
+                for reaction in &mut snapshot.reactions {
+                    reaction.status = ReactionStatus::Idle;
+                    reaction.invocation_id = None;
+                }
                 for (name, value) in ports {
                     if let Some(port) = snapshot.ports.iter_mut().find(|port| port.name == *name) {
                         port.value = Some(value.clone());

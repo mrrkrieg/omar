@@ -6,7 +6,7 @@ team Classifier[message_classifier : Codex] {
     output category : Category
     output explanation : string
 
-    prompt message_classifier(message) -> category, explanation "
+    task message_classifier(message) -> category, explanation "
         Classify this customer message:
         $(message)
 

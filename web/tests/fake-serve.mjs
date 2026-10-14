@@ -43,6 +43,8 @@ export async function startFakeServe({
   /** The geometry a terminal announces, as the daemon reports the agent's. */
   terminal: terminalSize = { cols: 96, rows: 28 },
   terminalReflow = false,
+  /** Fail a parked Web step without making tests wait for a real deadline. */
+  webFailure = /** @type {string | null} */ (null),
 } = {}) {
   const golden = JSON.parse(
     await readFile(new URL(`./fixtures/${snapshotFile}`, import.meta.url), "utf8"),
@@ -823,6 +825,8 @@ export async function startFakeServe({
       const lag = 250_000_000;
       entry.snapshot.current_tag = tag;
       entry.snapshot.lag = lag;
+      // As the runtime does: a new tag makes every task idle again.
+      for (const other of entry.snapshot.reactions) { other.status = "idle"; other.invocation_id = null; }
       publish(entry, "tag_advanced", { lag }, tag);
       await wait();
 
@@ -853,6 +857,15 @@ export async function startFakeServe({
       // finish while a panel still showed work outstanding — and would make a
       // test of "answer it and the run moves" test nothing.
       while ((entry.pending ?? []).some((item) => item.reaction === reaction.id)) {
+        if (webFailure) {
+          entry.record.status = "failed";
+          entry.record.error = webFailure;
+          entry.record.finished_at = Math.floor(Date.now() / 1000);
+          entry.snapshot.status = "failed";
+          entry.pending = [];
+          publish(entry, "run_failed", { message: webFailure });
+          return;
+        }
         await wait();
       }
 

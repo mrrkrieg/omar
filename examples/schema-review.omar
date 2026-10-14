@@ -4,7 +4,7 @@ team Review[reviewer : Codex] {
     input request : string
     output decision : Decision
     output explanation : string
-    prompt reviewer(request) -> decision, explanation "
+    task reviewer(request) -> decision, explanation "
         Review this request: $(request)
         Write approved or needs_revision to decision.
         Write your explanation to explanation.

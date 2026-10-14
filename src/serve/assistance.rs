@@ -452,7 +452,7 @@ mod tests {
         let mut request = json!({"id":id, "profile_id":"scenario-coverage-v1", "confirmed":true,
             "payload":{"kind":"proposal", "program":program,
                 "files":{"schemas/jev-decision.json":include_str!("../../examples/schemas/jev-decision.json")},
-                "inputs":{"review.request":"Complete request"}, "scenario_id":"review-actual-output", "scenario_version":"1"}});
+                "inputs":{"checks.request":"Complete request"}, "scenario_id":"review-actual-output", "scenario_version":"1"}});
         let (status, first) = register(&server.context, &serde_json::to_vec(&request).unwrap());
         assert_eq!(status, 200, "{first}");
         assert!(!first["input"]["deterministic_failures"]

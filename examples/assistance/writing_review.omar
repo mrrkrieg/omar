@@ -4,8 +4,8 @@ team WritingReview[writer: Codex, reviewer: Codex] {
     action draft: string
     action review: string
     output result: string
-    prompt writer(brief) -> draft "Write a draft for this brief. State the audience and requirements so the reviewer can assess them. Brief: $(brief)"
-    prompt reviewer(draft) -> review "Assess this actual draft for the stated audience and requirements. Return the complete draft followed by specific revision comments: $(draft)"
-    prompt writer(review) -> result "Revise the draft using the review. Return the final text in Markdown. Draft and reviewer comments: $(review)"
+    task writer(brief) -> draft "Write a draft for this brief. State the audience and requirements so the reviewer can assess them. Brief: $(brief)"
+    task reviewer(draft) -> review "Assess this actual draft for the stated audience and requirements. Return the complete draft followed by specific revision comments: $(draft)"
+    task writer(review) -> result "Revise the draft using the review. Return the final text in Markdown. Draft and reviewer comments: $(review)"
 }
 main { flow = WritingReview() }

@@ -16,11 +16,12 @@ export function ChatMessage({ message }: { message: ChatMessageModel }) {
     <article
       className={`message ${message.role}${message.progress ? " progress" : ""}`}
     >
-      <span>{message.role === "assistant" ? "EA" : "YOU"}</span>
+      <span aria-hidden="true">{message.role === "assistant" ? "O" : "YOU"}</span>
       {/* One column for the label and one for everything else. Adding a third
           child put the text in the label's 28px column, which broke it onto a
           line per word. */}
       <div className="message-content">
+        <div className="message-author">{message.role === "assistant" ? "OMAR" : "You"}</div>
         {message.selection.length > 0 ? (
           // Kept on the message so the thread still shows what "this one" meant.
           <p className="message-selection">[{message.selection.join(", ")}]</p>

@@ -55,6 +55,8 @@
   --dia-done-meta: #8fcaa8;
   --dia-live: #2a2347;
   --dia-live-meta: #b4a4f0;
+  /* A selected node's label: it keeps reading on the card it sits on. */
+  --dia-selected-text: #e9e1ff;
   --dia-chrome: rgba(24, 24, 28, 0.94);
   --dia-chrome-line: #3b3844;
   --dia-chrome-text: #c4c0cb;
@@ -115,6 +117,7 @@
   --dia-done-meta: #4c7a63;
   --dia-live: #ece5ff;
   --dia-live-meta: #6553a0;
+  --dia-selected-text: #4a2ba0;
   --dia-chrome: rgba(255, 255, 255, 0.94);
   --dia-chrome-line: #d5d3cf;
   --dia-chrome-text: #55535a;
@@ -1756,7 +1759,7 @@ h2 {
 .omar-port-group.selected .omar-port-label,
 .omar-action-group.selected .omar-action-label,
 .omar-reaction.selected .omar-reaction-name {
-  fill: #4a2ba0;
+  fill: var(--dia-selected-text);
   font-weight: 600;
 }
 
@@ -2654,3 +2657,17 @@ h2 {
 .imported-files { padding: 0.5rem 0.75rem; max-height: 35%; overflow: auto; border-bottom: 1px solid var(--border); }
 .imported-files summary { cursor: pointer; }
 .imported-files pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.75rem; }
+/* Keep run recovery and manual handoffs visible when the chat is collapsed. */
+.run-feedback { overflow-wrap: anywhere; flex-shrink: 0; padding: 14px 24px; border-bottom: 1px solid #d6d1c8; font-size: 13px; color: #28242f; }
+.run-feedback p { margin: 6px 0; line-height: 1.5; }
+.run-failure { background: #fff0ee; }
+.run-waiting { background: #f1edff; }
+.run-feedback details { margin-top: 8px; }
+.run-feedback summary { cursor: pointer; }
+.run-feedback pre { margin: 8px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; }
+.run-waiting button { margin-top: 6px; }
+.deploy-timeout { display: grid; gap: 8px; margin-top: 20px; font-size: 14px; }
+.deploy-timeout select { padding: 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--text); font: inherit; }
+
+.diagram-heading { flex-wrap: wrap; }
+.diagram-heading > div:first-child { min-width: 0; overflow-wrap: anywhere; }

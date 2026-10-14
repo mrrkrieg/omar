@@ -14,7 +14,7 @@ team Triage[triager : Stub]
     output decisions : list<Decision>
     output priority : option<Priority>
 
-    prompt triager(request) -> decisions, priority
+    task triager(request) -> decisions, priority
     "
         Triage this request: $(request)
         Write every decision it calls for to decisions, and a priority if one
@@ -28,7 +28,7 @@ team Summary[writer : Stub]
     input priority : option<Priority>
     output report : string
 
-    prompt writer(decisions, priority) -> report
+    task writer(decisions, priority) -> report
     "
         Decisions: $(decisions). Priority: $(priority).
         Write a one-line report to report.
