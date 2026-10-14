@@ -198,11 +198,12 @@ button:focus-visible, select:focus-visible { outline-offset: 3px; }
 .timeline-handle svg { transform: rotate(-90deg); }
 .timeline-handle small { font-size: 9px; }
 /* The redesign's shapes that main's dark theme has no colour for. */
-.omar-reaction-accent { stroke: var(--purple); }
+.omar-reaction-accent { stroke: var(--dia-node-line-soft); }
+.omar-reaction.running .omar-reaction-accent { stroke: var(--purple); }
 .omar-reaction.completed .omar-reaction-accent { stroke: var(--dia-done-meta); }
 .omar-reaction-description { fill: var(--dia-meta); }
-.omar-model-badge { fill: var(--dia-badge); stroke: var(--dia-badge-line); }
-.omar-model-mark { fill: var(--dia-index); }
+.omar-model-badge { fill: #141317; stroke: #141317; }
+.omar-model-mark { color: #ffffff; }
 .node-connection { fill: var(--dia-node); stroke: var(--dia-node-line); }
 .diagram-zoom button { color: var(--dia-chrome-text); }
 .diagram-legend { color: var(--dia-chrome-text); border-color: var(--dia-chrome-line); background: var(--dia-chrome); }
@@ -217,14 +218,13 @@ button:focus-visible, select:focus-visible { outline-offset: 3px; }
 :root[data-theme="light"] .omar-team-name { fill: #27242c; }
 :root[data-theme="light"] .omar-team-kind { fill: #7c7684; }
 :root[data-theme="light"] .omar-reaction-body, :root[data-theme="light"] .omar-reaction.web .omar-reaction-body { fill: #fff; stroke: #dddbe3; filter: drop-shadow(0 3px 4px #24203012); }
-:root[data-theme="light"] .omar-reaction-accent { stroke: #7748ed; fill: none; }
+:root[data-theme="light"] .omar-reaction-accent { stroke: #c9c5cf; fill: none; }
+:root[data-theme="light"] .omar-reaction.running .omar-reaction-accent { stroke: #7748ed; }
 :root[data-theme="light"] .omar-reaction-badge, :root[data-theme="light"] .omar-reaction.web .omar-reaction-badge { fill: #f3effb; stroke: #eae5f5; }
-:root[data-theme="light"] .omar-reaction-index { fill: #8057c4; }
+:root[data-theme="light"] .omar-reaction-index { fill: #7a7483; }
 :root[data-theme="light"] .omar-reaction-name { fill: #25212a; }
 :root[data-theme="light"] .omar-reaction-description { fill: #817b88; }
 :root[data-theme="light"] .omar-reaction-meta { fill: #746c80; }
-:root[data-theme="light"] .omar-model-badge { fill: #433c50; }
-:root[data-theme="light"] .omar-model-mark { fill: #fff; }
 :root[data-theme="light"] .node-connection { fill: #fff; stroke: #514b5b; }
 :root[data-theme="light"] .omar-reaction.completed .omar-reaction-body { fill: #fff; stroke: #cce2d6; }
 :root[data-theme="light"] .omar-reaction.completed .omar-reaction-accent { stroke: #56af87; }

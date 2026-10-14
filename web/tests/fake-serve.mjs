@@ -817,6 +817,8 @@ export async function startFakeServe({
       const lag = 250_000_000;
       entry.snapshot.current_tag = tag;
       entry.snapshot.lag = lag;
+      // As the runtime does: a new tag makes every task idle again.
+      for (const other of entry.snapshot.reactions) { other.status = "idle"; other.invocation_id = null; }
       publish(entry, "tag_advanced", { lag }, tag);
       await wait();
 

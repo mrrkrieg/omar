@@ -156,9 +156,13 @@ type TimerView = {
 type ReactionView = {
   id: string;
   order: number;
+  /** Its number among its own team instance's tasks, which is how the source reads. */
+  localOrder: number;
   name: string;
   meta: string;
   contract: string;
+  /** One line of what the task asks, from its prompt; the contract for a code reaction. */
+  summary: string;
   backend: string;
   status: string;
   box: Box;
@@ -435,7 +439,8 @@ function reactionLabels(snapshot: DiagramSnapshot): Map<string, ReactionLabels> 
   return new Map(
     snapshot.reactions.map((reaction) => {
       const owner = agents.get(reaction.agent);
-      const agent = owner?.name ?? reaction.agent;
+      // The agent's own name: the instance it belongs to is the box around it.
+      const agent = localName(owner?.name ?? reaction.agent, reaction.instance);
       // Which model is behind an agent changes how you read what it did, and
       // the program picked it deliberately, so it belongs on the task card.
       const detail = [owner?.backend, reaction.status]
@@ -459,6 +464,109 @@ function reactionLabels(snapshot: DiagramSnapshot): Map<string, ReactionLabels> 
 /** Rough advance width; contracts vary in length and must not overflow. */
 function textWidth(text: string, perChar: number): number {
   return text.length * perChar;
+}
+
+/**
+ * One line of what a task asks: its prompt's first sentence, with each
+ * `$(port)` read as the port's name. The card's width is set by the name and
+ * the model line, never by this; whatever does not fit ends in an ellipsis.
+ */
+export function summarisePrompt(prompt: string): string {
+  const flat = prompt
+    .replace(/\$\(([^)]*)\)/g, (_, port: string) => port.split(".").pop() ?? port)
+    .replace(/\s+/g, " ")
+    .trim();
+  const sentence = flat.match(/^(.*?[.!?])(?:\s|$)/)?.[1] ?? flat;
+  return sentence.replace(/[.!?:;,]+$/, "");
+}
+
+/** Cut to what a width holds at a per-character advance, ending in an ellipsis. */
+export function fitText(text: string, width: number, perChar: number): string {
+  const room = Math.max(1, Math.floor(width / perChar));
+  return text.length <= room ? text : `${text.slice(0, Math.max(0, room - 1)).trimEnd()}…`;
+}
+
+/**
+ * The model behind a task, as a mark on its card: a monochrome glyph for
+ * the backends OMAR knows, drawn in a 24-unit box, and an initial for one
+ * it does not. Not the vendors' artwork; a shape that reads as theirs.
+ */
+function BackendMark({ backend }: { backend: string }) {
+  const kind = backend.toLowerCase();
+  const stroke = { fill: "none", stroke: "currentColor", strokeWidth: 2.2, strokeLinecap: "round" as const, strokeLinejoin: "round" as const };
+  if (kind === "codex") {
+    // Six arcs about the centre: the interlocking ring.
+    return (
+      <g {...stroke} strokeWidth={2}>
+        {[0, 60, 120, 180, 240, 300].map((angle) => (
+          <path key={angle} d="M12 3.2 A8.8 8.8 0 0 1 19.6 7.6 L12 12 Z" transform={`rotate(${angle} 12 12)`} />
+        ))}
+      </g>
+    );
+  }
+  if (kind === "claude" || kind === "claudecode") {
+    // Rays from the centre: the sunburst.
+    return (
+      <g {...stroke} strokeWidth={2.4}>
+        {[0, 45, 90, 135, 180, 225, 270, 315].map((angle, i) => (
+          <path key={angle} d={`M12 12 L12 ${i % 2 === 0 ? 2.6 : 4.2}`} transform={`rotate(${angle} 12 12)`} />
+        ))}
+      </g>
+    );
+  }
+  if (kind === "cursor") {
+    // A cube seen from above.
+    return (
+      <g {...stroke}>
+        <path d="M12 2.5 L20.5 7.25 V16.75 L12 21.5 L3.5 16.75 V7.25 Z" />
+        <path d="M12 12 L20.5 7.25 M12 12 V21.5 M12 12 L3.5 7.25" />
+      </g>
+    );
+  }
+  if (kind === "opencode") {
+    return (
+      <g {...stroke}>
+        <path d="M4 6 L10 12 L4 18" />
+        <path d="M12 19 H20" />
+      </g>
+    );
+  }
+  if (kind === "pi") {
+    return (
+      <g {...stroke}>
+        <path d="M4 7 H20 M8 7 V19 M15.5 7 V17 Q15.5 19.5 18.5 19" />
+      </g>
+    );
+  }
+  if (kind === "antigravity" || kind === "agy") {
+    return (
+      <g {...stroke}>
+        <ellipse cx="12" cy="12" rx="9" ry="4.2" transform="rotate(-30 12 12)" />
+        <path d="M12 17 V5 M8.5 8.5 L12 5 L15.5 8.5" />
+      </g>
+    );
+  }
+  if (kind === "web") {
+    return (
+      <g {...stroke} strokeWidth={1.9}>
+        <circle cx="12" cy="12" r="9" />
+        <ellipse cx="12" cy="12" rx="4" ry="9" />
+        <path d="M3 12 H21" />
+      </g>
+    );
+  }
+  if (kind === "stub") {
+    return (
+      <g {...stroke} strokeWidth={2} strokeDasharray="3 2.6">
+        <circle cx="12" cy="12" r="8.5" />
+      </g>
+    );
+  }
+  return (
+    <text x="12" y="17" textAnchor="middle" fill="currentColor" fontSize="14" fontWeight="700">
+      {backend.slice(0, 1).toUpperCase()}
+    </text>
+  );
 }
 
 function reactionWidth(labels: ReactionLabels, within: number | null): number {
@@ -804,14 +912,25 @@ function buildLayout(
 
   const labels = reactionLabels(snapshot);
   const web = webAgents(snapshot);
+  // Numbered within each team instance, in declaration order: the card says
+  // "01" for an instance's first task however many other instances precede it.
+  const localOrders = new Map<string, number>();
+  const perInstance = new Map<string, number>();
+  for (const reaction of [...snapshot.reactions].sort((a, b) => a.order - b.order)) {
+    const seen = perInstance.get(reaction.instance) ?? 0;
+    localOrders.set(reaction.id, seen);
+    perInstance.set(reaction.instance, seen + 1);
+  }
   const reactions: ReactionView[] = snapshot.reactions.map((reaction) => {
     const label = labels.get(reaction.id) ?? { name: reaction.name, meta: "" };
     return {
       id: reaction.id,
       order: reaction.order,
+      localOrder: localOrders.get(reaction.id) ?? reaction.order,
       name: label.name,
       meta: label.meta,
       contract: reaction.contract,
+      summary: reaction.prompt ? summarisePrompt(reaction.prompt) : reaction.contract,
       backend: snapshot.agents.find((agent) => agent.id === reaction.agent)?.backend ?? "Agent",
       status: reaction.status,
       box: nodeBoxes.get(reaction.id) ?? { x: 0, y: 0, ...REACTION_SIZE },
@@ -1717,7 +1836,7 @@ export function DiagramCanvas({
                     y={36}
                     textAnchor="middle"
                   >
-                    {String(reaction.order + 1).padStart(2, "0")}
+                    {String(reaction.localOrder + 1).padStart(2, "0")}
                   </text>
                   <text
                     className="omar-reaction-name"
@@ -1727,10 +1846,12 @@ export function DiagramCanvas({
                     {reaction.name}
                   </text>
                   <text className="omar-reaction-description" x={REACTION_TEXT_X} y={46}>
-                    {reaction.contract.length > 24 ? `${reaction.contract.slice(0, 23)}…` : reaction.contract}
+                    {fitText(reaction.summary, reaction.box.width - REACTION_TEXT_X - CARD_END_PADDING, 5.6)}
                   </text>
                   <rect className="omar-model-badge" x={REACTION_TEXT_X} y={57} width={16} height={16} rx={5} />
-                  <text className="omar-model-mark" x={REACTION_TEXT_X + 8} y={68} textAnchor="middle">{reaction.backend.slice(0, 1)}</text>
+                  <g className="omar-model-mark" transform={`translate(${REACTION_TEXT_X + 2} 59) scale(0.5)`}>
+                    <BackendMark backend={reaction.backend} />
+                  </g>
                   <text className="omar-reaction-meta" x={REACTION_TEXT_X + 22} y={68}>{reaction.meta}</text>
                   {/* A deadline the program set for itself. A stopwatch rather
                       than a clock: a timer fires on its own, this counts down

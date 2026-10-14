@@ -68,7 +68,12 @@ export type DiagramReaction = { id: string, name: string, agent: string, order: 
  * the run. Carried so a client can draw the bound rather than leaving the
  * operator to read it out of the source.
  */
-within: number | null, };
+within: number | null, 
+/**
+ * The task's prompt, for a one-line summary on its card. `None` for a
+ * code reaction.
+ */
+prompt?: string, };
 
 export type DiagramEdge = { id: string, kind: EdgeKind, source: string, target: string, 
 /**

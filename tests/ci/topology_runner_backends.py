@@ -26,7 +26,7 @@ PROGRAM = '''team Ping[worker : {backend}] {{
     input request : string
     output result : string
 
-    prompt worker(request) -> result? within(15s)
+    task worker(request) -> result? within(15s)
     "Set `result` to pong. Request: $(request)"
 }}
 

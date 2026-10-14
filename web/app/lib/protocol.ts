@@ -393,6 +393,10 @@ export function applyDiagramEvent(
         // Carried on the event as well as the snapshot, so the reading stays
         // right after the run's server has gone and there is nothing to refetch.
         lag: typeof lag === "number" ? lag : snapshot.lag,
+        // A new tag: a task reads idle until it fires again.
+        reactions: snapshot.reactions.map((reaction) =>
+          reaction.status === "idle" ? reaction : { ...reaction, status: "idle", invocation_id: null },
+        ),
         timers: snapshot.timers.map((timer) =>
           timer.name in fired ? { ...timer, last_tag: event.tag } : timer,
         ),

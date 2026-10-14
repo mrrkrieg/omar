@@ -72,12 +72,12 @@ const STUB_FLOW = `team StubFlow[writer : Stub,
     output blurb : string
     action draft : string
 
-    prompt writer(topic) -> draft
+    task writer(topic) -> draft
     "
         Draft something about $(topic).
     "
 
-    prompt editor(draft) -> blurb
+    task editor(draft) -> blurb
     "
         Tighten $(draft).
     "
@@ -94,7 +94,7 @@ const UNRESOLVABLE = `team Conformance[worker : NotARealBackend]
     input go : string
     output done : string
 
-    prompt worker(go) -> done
+    task worker(go) -> done
     "
         Echo $(go) into done.
     "
@@ -523,7 +523,7 @@ test("two chats run the same topology independently and retain their live panels
   const program = `team Concurrent[panel : Web] {
     input question : string
     output answer : string
-    prompt panel(question) -> answer within(1min) "Answer $(question)."
+    task panel(question) -> answer within(1min) "Answer $(question)."
   }
   main Concurrent { flow = Concurrent() }`;
   try {

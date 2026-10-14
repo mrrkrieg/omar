@@ -130,12 +130,20 @@ test("the diagram reflects live reaction state from the run", async ({ page }) =
     timeout: 30_000,
   });
 
-  // Every reaction ends completed, so the renderer should show no idle chevrons
-  // and the diagram should carry one per reaction in the captured topology.
+  // A task is completed at the tag it ran at and idle again at the next, so
+  // only the last tag's task ends green; the diagram carries one card per
+  // task in the captured topology.
   const reactions = page.locator(".omar-reaction");
   await expect(reactions).toHaveCount(3);
-  await expect(page.locator(".omar-reaction.completed")).toHaveCount(3);
-  await expect(page.locator(".omar-reaction.idle")).toHaveCount(0);
+  await expect(page.locator(".omar-reaction.completed")).toHaveCount(1);
+  await expect(page.locator(".omar-reaction.idle")).toHaveCount(2);
+  // Numbered within the team instance, named by the agent alone, summarised
+  // by the prompt in one line that never widens the card.
+  const first = reactions.first();
+  await expect(first.locator(".omar-reaction-index")).toHaveText("01");
+  await expect(first.locator(".omar-reaction-name")).toHaveText("planner");
+  await expect(first.locator(".omar-reaction-description")).toHaveText(/^Draft a release plan for.*…$/);
+  await expect(reactions.nth(1).locator(".omar-reaction-description")).toHaveText("Critique the plan: plan");
   // Reactions are anonymous in OMAR, so the agent is the headline.
   await expect(page.locator(".omar-reactions")).toContainText("planner");
   await expect(page.locator(".omar-reactions")).toContainText("reviewer");
@@ -1086,9 +1094,10 @@ test("a finished run leaves nothing running and still opens a terminal", async (
   await expect(page.locator(".omar-reaction.running")).toHaveCount(0);
   const reactions = page.locator(".omar-reaction");
   await expect(reactions).not.toHaveCount(0);
-  for (const reaction of await reactions.all()) {
-    await expect(reaction).toContainText("completed");
-  }
+  // Completed is a fact about the tag a task ran at: the last tag's task
+  // reads completed, the earlier ones read idle again.
+  await expect(reactions.last()).toContainText("completed");
+  await expect(reactions.first()).toContainText("idle");
 
   // The agents outlive the run, so their terminals are still reachable.
   await page.locator(".omar-reaction .omar-reaction-body").first().dblclick();

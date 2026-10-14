@@ -14,7 +14,7 @@ team Review[reviewer : Stub]
     output decision : Decision
     output priority : Priority
 
-    prompt reviewer(request) -> decision, priority
+    task reviewer(request) -> decision, priority
     "
         Review this request: $(request)
         Write a decision and a priority. Each port admits only the values its

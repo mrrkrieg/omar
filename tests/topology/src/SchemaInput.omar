@@ -12,7 +12,7 @@ team Gate[keeper : Stub]
     output note : string
     output route : string
 
-    prompt keeper(decision) -> note
+    task keeper(decision) -> note
     "
         The decision is $(decision). Write a short note to note.
     "
