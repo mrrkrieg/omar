@@ -55,6 +55,8 @@
   --dia-done-meta: #8fcaa8;
   --dia-live: #2a2347;
   --dia-live-meta: #b4a4f0;
+  /* A selected node's label: it keeps reading on the card it sits on. */
+  --dia-selected-text: #e9e1ff;
   --dia-chrome: rgba(24, 24, 28, 0.94);
   --dia-chrome-line: #3b3844;
   --dia-chrome-text: #c4c0cb;
@@ -115,6 +117,7 @@
   --dia-done-meta: #4c7a63;
   --dia-live: #ece5ff;
   --dia-live-meta: #6553a0;
+  --dia-selected-text: #4a2ba0;
   --dia-chrome: rgba(255, 255, 255, 0.94);
   --dia-chrome-line: #d5d3cf;
   --dia-chrome-text: #55535a;
@@ -1740,7 +1743,7 @@ h2 {
 .omar-port-group.selected .omar-port-label,
 .omar-action-group.selected .omar-action-label,
 .omar-reaction.selected .omar-reaction-name {
-  fill: #4a2ba0;
+  fill: var(--dia-selected-text);
   font-weight: 600;
 }
 
