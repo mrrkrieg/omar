@@ -2034,12 +2034,15 @@ test("chat history restores messages and proposals after switching and reloading
   await page.getByLabel("Draft workflow").click();
   await expect(page.locator(".messages")).toContainText("Keep the same requirements");
   await expect(history.locator('[aria-current="true"]')).toContainText("Review the release plan");
-      await history.getByRole("button", { name: "Fold chat history" }).click();
-  const rail = page.getByRole("navigation", { name: "Chat navigation" });
-    await expect(history).toHaveCount(0);
-  await expect(rail).toBeVisible();
-    await expect(rail.getByRole("button", { name: "Open chat history" })).toBeFocused();
-    await rail.getByRole("button", { name: "Open chat history" }).click();
+  // The list folds from its divider, like the other columns, and leaves a
+  // handle at the edge that brings it back.
+  const divider = page.getByRole("separator", { name: "the workflow list" });
+  await divider.hover();
+  await divider.getByRole("button", { name: "Hide the workflow list" }).click();
+  await expect(history).toHaveCount(0);
+  const handle = page.getByRole("button", { name: "Show the workflow list" });
+  await expect(handle).toBeFocused();
+  await handle.click();
   await expect(history).toBeVisible();
   await expect(page.getByRole("group", { name: "Deploy design" })).toBeVisible();
 });

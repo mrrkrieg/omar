@@ -1141,12 +1141,24 @@ function StudioWorkspace({ serveUrl = "", historyUrl, designAgent, selectedId, o
             revision={`${historyRevision}:${messages.length}`}
             collapsed={!historyDrawer && !historyOpen}
             onClose={closeHistory}
-            onOpen={openHistory}
-            railButtonRef={historyRailButtonRef}
             onSelect={(conversation) => {
               onSelect(conversation);
               if (historyDrawer) setDrawerOpen(false);
             }}
+          />
+        ) : null}
+        {!isDemo && !historyDrawer ? (
+          <Resizer
+            label="the workflow list"
+            collapsed={!historyOpen}
+            toward="right"
+            fixed
+            handleRef={historyRailButtonRef}
+            onExpand={openHistory}
+            onCollapse={closeHistory}
+            onDragStart={() => {}}
+            onDelta={() => {}}
+            onStep={() => {}}
           />
         ) : null}
       <section

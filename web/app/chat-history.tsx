@@ -33,17 +33,15 @@ export function SidebarIcon({ direction }: { direction: "open" | "close" }) {
   );
 }
 
-export function ChatHistory({ serveUrl, activeId, mobile, revision, collapsed, onClose, onOpen, onSelect, onSwitchingChange, railButtonRef }: {
+export function ChatHistory({ serveUrl, activeId, mobile, revision, collapsed, onClose, onSelect, onSwitchingChange }: {
   serveUrl: string;
   activeId: string;
   mobile: boolean;
   revision: string;
   collapsed: boolean;
   onClose: () => void;
-  onOpen: () => void;
   onSelect: (conversation: ConversationSummary) => void;
   onSwitchingChange: (switching: boolean) => void;
-  railButtonRef: RefObject<HTMLButtonElement | null>;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [chats, setChats] = useState<ConversationSummary[]>([]);
@@ -129,28 +127,11 @@ export function ChatHistory({ serveUrl, activeId, mobile, revision, collapsed, o
     }
     return updatedAt(b) - updatedAt(a) || byName();
   });
-  if (collapsed) {
-    return (
-      <nav className="history-rail" aria-label="Chat navigation">
-        <OmarLogo />
-        <button
-          ref={railButtonRef}
-          type="button"
-          onClick={onOpen}
-          aria-label="Open chat history"
-          title="Open sidebar"
-        >
-          <SidebarIcon direction="open" />
-        </button>
-      </nav>
-    );
-  }
+  // Folded: the divider's handle beside the conversation is the way back.
+  if (collapsed) return null;
   const content = <>
     <header>
       <div className="brand-lockup"><OmarLogo /><strong>OMAR</strong></div>
-      <button type="button" className="history-fold" onClick={onClose} aria-label="Fold chat history" title="Fold sidebar">
-        <SidebarIcon direction="close" />
-      </button>
     </header>
     <div className="sidebar-heading">
       <div><span className="eyebrow">WORKSPACE</span><h2 id="chat-history-title">Workflows</h2></div>

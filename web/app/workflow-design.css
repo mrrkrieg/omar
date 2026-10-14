@@ -22,6 +22,8 @@ html, body { font-family: "DM Sans", ui-sans-serif, system-ui, sans-serif; }
   --paper-border: #ddddd7;
   --paper-ink: #1b1b20;
 }
+/* The redesign's tokens that main's light theme does not redefine. */
+:root[data-theme="light"] { --purple-soft: #ebe4fb; }
 .studio-shell { background: var(--ink); }
 button, input, textarea, select { font: inherit; }
 button { transition: background 140ms ease, border-color 140ms ease; }
@@ -61,7 +63,6 @@ button:focus-visible, select:focus-visible { outline-offset: 3px; }
 .chat-history .workflow-status { display: flex; align-items: center; gap: 5px; font-size: 9px; font-weight: 650; }
 .workflow-status i { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
 .workflow-meta time { font-size: 9px; padding-left: 8px; }
-.history-rail { background: var(--panel); }
 .builder-panel { background: var(--panel-2); border: 0; padding-top: 0; }
 .conversation-header { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: 12px; min-height: 68px; padding: 12px 18px; border-bottom: 1px solid var(--line); }
 .conversation-crumb { display: flex; min-width: 0; align-items: center; gap: 8px; font-size: 11px; }
@@ -140,7 +141,7 @@ button:focus-visible, select:focus-visible { outline-offset: 3px; }
 :root:not([data-theme="light"]) .date-divider { color: #88818f; }
 :root:not([data-theme="light"]) .date-divider::before, :root:not([data-theme="light"]) .date-divider::after { background: #2b2831; }
 :root:not([data-theme="light"]) .message > span { color: #bea9f8; background: #2a1c47; }
-:root:not([data-theme="light"]) .message.assistant > span { color: white; background: linear-gradient(145deg, #9168ff, #6e3cdd); }
+.message.assistant > span { color: white; background: linear-gradient(145deg, #9168ff, #6e3cdd); font-size: 13px; font-weight: 800; }
 :root:not([data-theme="light"]) .message-author { color: #f0edf3; }
 :root:not([data-theme="light"]) .message p, :root:not([data-theme="light"]) .message-body { color: #c9c5ce; }
 :root:not([data-theme="light"]) .prompt-box { box-shadow: 0 10px 30px #00000012; }
@@ -154,25 +155,25 @@ button:focus-visible, select:focus-visible { outline-offset: 3px; }
 /* The light theme's shell. */
 :root[data-theme="light"] .history-actions .new-workflow { border: 1px solid #cdbff5; background: linear-gradient(180deg, #f1ebff, #e9e1fb); color: #3b2a7a; box-shadow: none; }
 :root[data-theme="light"] .workflow-search { color: var(--muted); background: var(--panel); }
-:root[data-theme="light"] .chat-history header .history-fold, .conversation-fold, .files-button, .terminal-button { color: var(--text-2); background: var(--panel-2); }
-:root[data-theme="light"] .eyebrow, .history-label, .workflow-search input::placeholder, .workflow-sort-heading, .conversation-crumb, .conversation-crumb i, .date-divider, .prompt-box textarea::placeholder { color: var(--muted); }
-:root[data-theme="light"] .conversation-crumb strong, .message-author, .prompt-box textarea { color: var(--text); }
-:root[data-theme="light"] .message p, .message-body { color: var(--text-2); }
+:root[data-theme="light"] .chat-history header .history-fold, :root[data-theme="light"] .conversation-fold, :root[data-theme="light"] .files-button, :root[data-theme="light"] .terminal-button { color: var(--text-2); background: var(--panel-2); }
+:root[data-theme="light"] .eyebrow, :root[data-theme="light"] .history-label, :root[data-theme="light"] .workflow-search input::placeholder, :root[data-theme="light"] .workflow-sort-heading, :root[data-theme="light"] .conversation-crumb, :root[data-theme="light"] .conversation-crumb i, :root[data-theme="light"] .date-divider, :root[data-theme="light"] .prompt-box textarea::placeholder { color: var(--muted); }
+:root[data-theme="light"] .conversation-crumb strong, :root[data-theme="light"] .message-author, :root[data-theme="light"] .prompt-box textarea { color: var(--text); }
+:root[data-theme="light"] .message p, :root[data-theme="light"] .message-body { color: var(--text-2); }
 :root[data-theme="light"] .chat-history .workflow-sort-trigger { color: var(--muted); }
-:root[data-theme="light"] .chat-history .workflow-sort-trigger:hover, .chat-history .workflow-sort-trigger[aria-expanded="true"] { color: var(--text); background: var(--panel-2); }
+:root[data-theme="light"] .chat-history .workflow-sort-trigger:hover, :root[data-theme="light"] .chat-history .workflow-sort-trigger[aria-expanded="true"] { color: var(--text); background: var(--panel-2); }
 :root[data-theme="light"] .workflow-sort-menu { border: 1px solid var(--line); background: var(--panel); box-shadow: 0 12px 30px #0002; }
 :root[data-theme="light"] .chat-history .workflow-sort-menu button { color: var(--text-2); }
-:root[data-theme="light"] .chat-history .workflow-sort-menu button[aria-checked="true"], .chat-history .workflow-sort-menu button:hover { color: var(--text); background: var(--panel-2); }
+:root[data-theme="light"] .chat-history .workflow-sort-menu button[aria-checked="true"], :root[data-theme="light"] .chat-history .workflow-sort-menu button:hover { color: var(--text); background: var(--panel-2); }
 :root[data-theme="light"] .workflow-sort-check { color: var(--purple); }
 :root[data-theme="light"] .chat-history li button:hover:not(:disabled) { background: var(--panel-2); border-color: var(--line-2); }
 :root[data-theme="light"] .chat-history li [aria-current="true"] { border-color: #bfaef2; color: var(--text); background: linear-gradient(105deg, #f1ecff, #f8f6ff); box-shadow: inset 3px 0 var(--purple); }
-:root[data-theme="light"] .chat-history li .workflow-description, .workflow-meta time { color: var(--muted); }
+:root[data-theme="light"] .chat-history li .workflow-description, :root[data-theme="light"] .workflow-meta time { color: var(--muted); }
 :root[data-theme="light"] .workflow-meta time { border-left-color: var(--line); }
-:root[data-theme="light"] .chat-history .status-running, .chat-history .status-thinking, .chat-history .status-starting { color: #6b4fd8; }
+:root[data-theme="light"] .chat-history .status-running, :root[data-theme="light"] .chat-history .status-thinking, :root[data-theme="light"] .chat-history .status-starting { color: #6b4fd8; }
 :root[data-theme="light"] .chat-history .status-failed { color: #c0392b; }
-:root[data-theme="light"] .chat-history .status-stopped, .chat-history .status-stopping { color: #a66a0e; }
+:root[data-theme="light"] .chat-history .status-stopped, :root[data-theme="light"] .chat-history .status-stopping { color: #a66a0e; }
 :root[data-theme="light"] .chat-history .status-completed { color: #2f8f5b; }
-:root[data-theme="light"] .date-divider::before, .date-divider::after { background: var(--line); }
+:root[data-theme="light"] .date-divider::before, :root[data-theme="light"] .date-divider::after { background: var(--line); }
 :root[data-theme="light"] .message > span { color: var(--accent-text); background: var(--purple-soft); }
 /* The paper canvas of the redesign is the light theme's; in the dark theme the
    diagram keeps the shell's dark tokens. Geometry and type stay the same in both. */
@@ -275,10 +276,10 @@ button:focus-visible, select:focus-visible { outline-offset: 3px; }
 .files-modal-header h2 { margin-top: 8px; font-size: 18px; }
 .workspace-controls { display: grid; grid-template-columns: minmax(120px,1fr) minmax(120px,1fr) auto; align-items: end; gap: 12px; padding: 0 28px; }
 .workspace-controls label { display: flex; min-width: 0; flex-direction: column; gap: 7px; font-size: 10px; }
-.workspace-controls select, .workspace-name { width: 100%; height: 39px; border: 1px solid #34313b; border-radius: 8px; padding: 0 11px; color: #e2dfe5; background: #111115; font-size: 11px; }
+.workspace-controls select, .workspace-name { width: 100%; height: 39px; border-radius: 8px; padding: 0 11px; font-size: 11px; }
 .workspace-name { display: flex; align-items: center; gap: 8px; overflow: hidden; }
 .workspace-controls .primary-button { height: 39px; font-size: 11px; }
-.workspace-notice { margin: 12px 28px 0; padding-bottom: 14px; border-bottom: 1px solid #2c2932; color: #a59cad; font-size: 11px; line-height: 1.5; }
+.workspace-notice { margin: 12px 28px 0; padding-bottom: 14px; font-size: 11px; line-height: 1.5; }
 .file-browser { display: grid; min-height: 0; flex: 1; grid-template-columns: 240px minmax(0,1fr); margin: 0 28px 26px; }
 .file-tree { min-height: 0; overflow-y: auto; padding: 18px 15px 18px 0; border-right: 1px solid #2c2932; }
 .tree-root { margin: 0 8px 11px; color: #aaa5b0; font: 11px ui-monospace, monospace; overflow-wrap: anywhere; }
@@ -328,7 +329,7 @@ button:focus-visible, select:focus-visible { outline-offset: 3px; }
   .files-modal-header { padding: 20px 16px 16px; }
   .workspace-controls { grid-template-columns: 1fr 1fr; padding: 0 16px; }
   .workspace-controls .primary-button { grid-column: 1/-1; }
-  .workspace-notice { margin-left: 16px; margin-right: 16px; }
+.workspace-notice { margin-left: 16px; margin-right: 16px; }
   .file-browser { grid-template-columns: minmax(90px, .6fr) minmax(0,1fr); margin: 0 16px 16px; }
   .file-tree { padding-right: 7px; }
   .file-tree button { gap: 4px; padding: 4px; font-size: 9px; overflow-wrap: anywhere; }
@@ -356,24 +357,24 @@ button:focus-visible, select:focus-visible { outline-offset: 3px; }
 
 .backend-trigger { height: 34px; font-size: 11px; border-radius: 7px; }
 /* Preserve the newer runtime's worktree browser and version actions. */
-.artifacts-dialog { inset: 0; width: min(1168px, calc(100vw - 68px)); height: min(650px, calc(100dvh - 68px)); max-height: none; padding: 28px; border-color: #33303a; border-radius: 17px; background: #17161d; box-shadow: 0 28px 90px #0007; }
+.artifacts-dialog { inset: 0; width: min(1168px, calc(100vw - 68px)); height: min(650px, calc(100dvh - 68px)); max-height: none; padding: 28px; border-radius: 17px; }
 .artifacts-dialog::backdrop { backdrop-filter: blur(2px); }
 .artifacts-dialog header { margin-bottom: 22px; }
 .artifacts-dialog h2 { margin: 8px 0 0; font-size: 18px; }
 .artifact-controls label { font-size: 10px; gap: 7px; }
-.artifact-controls select { height: 39px; border-radius: 8px; border-color: #34313b; background: #111115; font-size: 11px; }
+.artifact-controls select { height: 39px; border-radius: 8px; font-size: 11px; }
 .artifact-controls button { height: 39px; font-size: 11px; }
-.artifact-guidance { font-size: 11px; color: #a59cad; opacity: 1; margin: 12px 0; }
-.artifact-body { grid-template-columns: 250px minmax(0,1fr); border-color: #2c2932; }
-.artifact-body nav { border-color: #2c2932; padding-top: 18px; }
-.artifact-body nav button { padding: 10px; border-radius: 7px; font-size: 11px; color: #b1a6bd; }
+.artifact-guidance { font-size: 11px; opacity: 1; margin: 12px 0; }
+.artifact-body { grid-template-columns: 250px minmax(0,1fr); }
+.artifact-body nav { padding-top: 18px; }
+.artifact-body nav button { padding: 10px; border-radius: 7px; font-size: 11px; }
 .artifact-path { font-size: 10px; }
-.artifact-preview-title { padding-bottom: 12px; border-bottom: 1px solid #2b2931; }
-.artifact-preview > p { color: #aaa1b5; font-size: 12px; line-height: 1.7; }
+.artifact-preview-title { padding-bottom: 12px; }
+.artifact-preview > p { font-size: 12px; line-height: 1.7; }
 .run-feedback { flex-shrink: 0; }
 @media (max-width: 760px) {
-  .artifacts-dialog { width: calc(100vw - 20px); height: calc(100dvh - 32px); padding: 16px; }
-  .artifact-body { grid-template-columns: 1fr; }
+.artifacts-dialog { width: calc(100vw - 20px); height: calc(100dvh - 32px); padding: 16px; }
+.artifact-body { grid-template-columns: 1fr; }
 }
 
 .chat-history li .workflow-title { overflow: hidden; flex: 1; min-width: 0; white-space: nowrap; text-overflow: ellipsis; font: inherit; }
@@ -388,6 +389,7 @@ button:focus-visible, select:focus-visible { outline-offset: 3px; }
 .workflow-row { position: relative; }
 .workflow-rename { position: absolute; top: 7px; left: 8px; width: calc(100% - 43px); height: 30px; min-width: 0; border: 1px solid var(--purple); border-radius: 5px; padding: 5px 4px; box-shadow: 0 0 0 2px #7748ed26; color: white; background: #211b2c; font-family: inherit; font-size: 12px; font-weight: 650; }
 .resizer { position: relative; overflow: visible; }
+.resizer.fixed { cursor: default; }
 .resizer-collapse { position: absolute; z-index: 5; top: 50%; left: -24px; width: 24px; height: 42px; opacity: 0; pointer-events: none; border: 1px solid #443652; border-radius: 7px; background: #211a2d; color: #d8c9f5; cursor: pointer; transition: opacity 120ms ease; }
 .resizer:hover .resizer-collapse, .resizer:focus-within .resizer-collapse { opacity: 1; pointer-events: auto; }
 
@@ -404,4 +406,23 @@ button:focus-visible, select:focus-visible { outline-offset: 3px; }
 .step-save { margin-top: 16px; padding: 10px; width: 100%; border: 0; border-radius: 7px; background: var(--purple); color: white; font-family: inherit; font-size: 11px; font-weight: 600; }
 .step-config-error { padding: 10px; border-radius: 6px; background: #fff0f0; color: #9a3b4a; font-size: 11px; white-space: pre-wrap; overflow-wrap: anywhere; }
 
-.artifact-body nav button[aria-current="true"] { color: #dfd1ff; background: #2c203f; border-color: #654d86; }
+
+/* The files dialog: its colours are the dark theme's; the light theme takes the tokens. */
+:root:not([data-theme="light"]) .workspace-controls select, :root:not([data-theme="light"]) .workspace-name { border: 1px solid #34313b; color: #e2dfe5; background: #111115; }
+:root:not([data-theme="light"]) .workspace-notice { border-bottom: 1px solid #2c2932; color: #a59cad; }
+:root:not([data-theme="light"]) .artifacts-dialog { border-color: #33303a; background: #17161d; box-shadow: 0 28px 90px #0007; }
+:root:not([data-theme="light"]) .artifact-controls select { border-color: #34313b; background: #111115; }
+:root:not([data-theme="light"]) .artifact-guidance { color: #a59cad; }
+:root:not([data-theme="light"]) .artifact-body { border-color: #2c2932; }
+:root:not([data-theme="light"]) .artifact-body nav { border-color: #2c2932; }
+:root:not([data-theme="light"]) .artifact-body nav button { color: #b1a6bd; }
+:root:not([data-theme="light"]) .artifact-preview-title { border-bottom: 1px solid #2b2931; }
+:root:not([data-theme="light"]) .artifact-preview > p { color: #aaa1b5; }
+:root:not([data-theme="light"]) .artifact-body nav button[aria-current="true"] { color: #dfd1ff; background: #2c203f; border-color: #654d86; }
+:root[data-theme="light"] .artifacts-dialog { border-color: var(--line); background: var(--panel); color: var(--text); box-shadow: 0 28px 90px #0003; }
+:root[data-theme="light"] .workspace-controls select, :root[data-theme="light"] .workspace-name, :root[data-theme="light"] .artifact-controls select { border-color: var(--line); color: var(--text); background: var(--panel-2); }
+:root[data-theme="light"] .workspace-notice, :root[data-theme="light"] .artifact-guidance, :root[data-theme="light"] .artifact-preview > p { color: var(--muted); }
+:root[data-theme="light"] .artifact-body nav button { color: var(--text-2); }
+:root[data-theme="light"] .artifact-body, :root[data-theme="light"] .artifact-body nav, :root[data-theme="light"] .workspace-notice, :root[data-theme="light"] .artifact-preview-title { border-color: var(--line); }
+:root[data-theme="light"] .artifact-body nav button[aria-current="true"] { color: var(--accent-text); background: var(--purple-soft); border-color: #c9b8f3; }
+:root[data-theme="light"] .artifact-comparison h3 { color: var(--accent-text); }
