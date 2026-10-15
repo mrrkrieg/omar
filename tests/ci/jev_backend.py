@@ -183,6 +183,7 @@ main JevConfigurationTest { review = Review() }
         cases.extend([
             ("reasoning_revise", "continue", .949999, .99, .99, True, "repair", "stop"),
             ("reasoning_unresolved", "continue", .949999, .99, .99, True, "blocked", "defer"),
+            ("reasoning_no_explanation", "continue", .949999, .99, .99, True, "blocked", "continue"),
             ("deterministic_empty", "continue", .99, .99, .99, False, "repair", "continue"),
             ("deterministic_oversize", "continue", .99, .99, .99, False, "repair", "continue"),
         ])
@@ -196,7 +197,11 @@ main JevConfigurationTest { review = Review() }
                 (temp / "schemas/jev-decision.json").write_text(json.dumps({"type":"string", "enum":values}))
                 # Replace only the reasoning backend with a deterministic model
                 # fixture. Its output must only appear on escalated invocations.
-                program = (REPO / "examples/jev-review.omar").read_text().replace("reasoner : Codex", "reasoner : Stub")
+                program = (REPO / "tests/topology/src/JevReview.omar").read_text().replace("reasoner : Codex", "reasoner : Stub")
+                if mode == "reasoning_no_explanation":
+                    # Keep the actual fallback invocation, then blank only its explanation.
+                    program = program.replace("main JevReview {", 'team Blank { input reason : string output out : string reaction(reason) -> out {= out = Some(String::new()); =} }\nmain JevReview { blank = Blank()')
+                    program = program.replace("reasoning.reason -> resolved.reason", "reasoning.reason -> blank.reason\n    blank.out -> resolved.reason")
                 (temp / "workflow.omar").write_text(program)
                 others = [value for value in ["continue", "stop", "defer"] if value != choice]
                 probabilities = {choice: probability, others[0]: (1-probability)/2, others[1]: (1-probability)/2}
@@ -245,7 +250,7 @@ main JevConfigurationTest { review = Review() }
                 self.assertEqual(evidence['context'], {'checks.request' if deterministic_failure else 'review.request': message})
                 if fallback:
                     self.assertEqual(evidence['reasoning']['outcome'], reasoned_choice)
-                    self.assertTrue(evidence['reasoning']['reason'])
+                    self.assertEqual(bool(evidence['reasoning']['reason']), mode != 'reasoning_no_explanation')
                 if branch == "blocked":
                     self.assertEqual(evidence['error']['kind'], 'unresolved_reasoning')
                     self.assertTrue(evidence['error']['message'])

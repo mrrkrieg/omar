@@ -4,10 +4,6 @@ import { defineConfig, devices } from "@playwright/test";
 export const FAKE_SERVE_PORT = 7399;
 export const FAKE_SERVE_URL = `http://127.0.0.1:${FAKE_SERVE_PORT}`;
 
-// Local validation can use a free port without reusing an unrelated service.
-const appPort = process.env.OMAR_E2E_PORT ?? "3100";
-const appUrl = `http://127.0.0.1:${appPort}`;
-
 /**
  * Drives the built application, not the dev server, so the E2E test exercises
  * what actually ships. The fake `omar serve` is started per test file rather
@@ -22,14 +18,14 @@ export default defineConfig({
   reporter: process.env.CI ? "line" : "list",
   timeout: 60_000,
   use: {
-    baseURL: appUrl,
+    baseURL: "http://127.0.0.1:3100",
     trace: "retain-on-failure",
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
   webServer: {
-    command: `npm run start -- --port ${appPort}`,
-    url: appUrl,
-    reuseExistingServer: !process.env.CI && !process.env.OMAR_E2E_PORT,
+    command: "npm run start -- --port 3100",
+    url: "http://127.0.0.1:3100",
+    reuseExistingServer: !process.env.CI,
     timeout: 120_000,
     // Mode is a launch flag, so the app must be started pointing at the fake
     // daemon. Tests bind it to this fixed port.

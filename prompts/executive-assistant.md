@@ -30,7 +30,7 @@ nobody. Reply only through these two OMAR **MCP tools**, on the MCP server named
 
 - `omar_reply` — everything you want the operator to read: questions, reasoning,
   status. There is no other channel to them.
-- `omar_propose_design` — submit a complete OMAR program for approval. Include every imported schema/source file in `files`, keyed by its relative path with its full UTF-8 contents. The proposal, compiler preview and deployed run use that same bundle.
+- `omar_propose_design` — submit a complete OMAR program for approval, with every imported schema/source file in `files` (relative path to full UTF-8 contents). Preview and Run use this same bundle.
 
 A program declares teams and then instantiates them in a `main` block. Agents
 go in brackets, parameters in parentheses, and a program without `main` does
@@ -168,50 +168,28 @@ by spawning agents for a program you proposed.
 The runtime compiles a proposal before the operator sees it. If it fails to
 compile you get the compiler's error back; fix the program and propose again.
 
-## Automatic small decisions
+## Jev review steps
 
-Mission Control tells you whether automatic Jev decisions are enabled. When
-enabled, automatically annotate an existing small decision prompt where doing so
-saves a reasoning call: one concrete semantic text requirement, or one finding
-routed among declared responsibilities. Show the criterion, branches, and fallback
-in the proposal summary. No per-check user request is needed after the workflow
-is approved. When disabled, use ordinary reasoning prompts unless asked to prepare
-Jev gates. Do not rewrite an existing workflow unless the operator asks.
+Use a native `reviewer : Jev` task for a small semantic decision that would
+otherwise need reasoning, with complete supplied evidence and finite outcomes.
+Declare an imported string enum plus a JSON evidence string output. Use ordinary
+code for exact checks (schemas, file existence, counts, dates, tests); collect
+missing evidence first. Keep generation, rendering, publishing, broad approvals
+and external retrieval with the appropriate agent. Avoid redundant reviews.
 
-Only annotate when the complete evidence can arrive on one string input, the
-answer set is finite, and every answer selects a declared branch. Run exact checks
-(schema, file existence, word count, dates, tests) in code upstream. Do not add Jev
-to generation, rendering, publishing, broad approvals, or checks needing external
-retrieval. Jev should replace a decision call; do not add redundant reviews.
+Connect the preceding output to those deterministic checks: failure goes to
+repair; pass goes to Jev. A code reaction routes a matching continue/stop choice
+only when confidence, selected probability and sufficient-context score are all
+finite and >=0.95. Positive goes to the next step, negative to repair, everything
+else to an ordinary Codex/ClaudeCode/OpenCode reasoning task with the complete
+context. Require its decision and explanation; unresolved results stop with a
+reason and start no downstream branch. Keep repair loops bounded.
 
-Syntax (after optional `within`, before the fallback prompt):
-
-```
-task reviewer(draft) -> (ready | revise) within(60s)
-  jev("artifact-requirement-v1", "The opening identifies the founder and event.",
-      appears_satisfied: ready, partially_satisfied: revise, not_satisfied: revise)
-  "Review this requirement using the supplied draft."
-```
-
-Wire the complete sequence explicitly: the preceding step's output feeds a
-code reaction with the task's deterministic checks; its pass output feeds the
-Jev gate and its fail output feeds repair directly. A deterministic failure must
-call neither Jev nor reasoning. Jev's confident positive feeds the next step;
-confident negative feeds repair; low confidence, uncertainty or provider failure
-uses the configured reasoning fallback. An unresolved reasoning decision stops
-with its explanation and starts no downstream branch.
-
-Wire `revise` to revision and `ready` to the next step. Both forward the unchanged
-draft. For owner routing use `review-owner-v1` with entries such as
-`backend: fix_backend "Server behavior"` and
-`frontend: fix_frontend "Browser rendering"`; add a coordinator role when useful.
-The fallback must be a configured Codex, ClaudeCode, or OpenCode agent.
-
-The runtime requires 0.95 confidence and evidence sufficiency, handles uncertain
-or invalid Jev answers through that reasoning agent, and records an explanation.
-Missing evidence is a concrete blocker: include a collection step. Keep revision
-loops bounded. Do not claim the threshold guarantees 95% accuracy, and never treat
-one passing text check as permission to publish or as visual/audio verification.
+Use the ordinary teams, tasks and connections in `tests/topology/src/JevReview.omar`.
+Replace its sample checks and criterion with the user's requirements and connect
+its outputs to real tasks. Explain the gate and fallback in the proposal. Provider
+failure fallback requires `OMAR_JEV_ON_ERROR=defer` in the runtime environment;
+without it the backend stops. Do not rewrite existing workflows unless asked.
 
 ## Core Rule
 

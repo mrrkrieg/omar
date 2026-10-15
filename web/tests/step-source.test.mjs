@@ -42,13 +42,3 @@ test('unsupported or ambiguous source remains for the source editor', () => {
  assert.equal(locateStep(program, snapshot, {...snapshot.reactions[0], name:'reaction.99'}), null);
  assert.equal(locateStep(program, snapshot, {...snapshot.reactions[0], agent:'agent::unknown'}), null);
 });
-
-
-test('Jev gate strings cannot be mistaken for the editable task prompt', () => {
- for (const deadline of ['', 'within(30s) ']) {
-  const source = program.replace('-> plan "Use', '-> (plan | critique) '+deadline+'jev("artifact-requirement-v1", "Has a founder", appears_satisfied: plan, partially_satisfied: critique, not_satisfied: critique) "Use');
-  // Also covers the old preview while a freshly edited annotation is checking.
-  assert.equal(locateStep(source, snapshot, snapshot.reactions[0]), null);
- }
- assert.equal(locateStep(program, snapshot, { ...snapshot.reactions[0], decision_gate: {profile:'artifact-requirement-v1', criterion:'Has a founder', routes:[]} }), null);
-});

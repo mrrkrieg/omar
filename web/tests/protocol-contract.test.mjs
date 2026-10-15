@@ -14,7 +14,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import { startFakeServe, INVALID_MARKER } from "./fake-serve.mjs";
-import { RUN_STATUSES, assertRunRecord, isRunFinished, parseInputValue, applyDiagramEvent, assertChatMessage } from "../app/lib/protocol.ts";
+import { RUN_STATUSES, assertRunRecord, isRunFinished, parseInputValue, assertChatMessage } from "../app/lib/protocol.ts";
 import { defaultRunTimeout, describeRunFailure } from "../app/lib/run-feedback.ts";
 
 const golden = JSON.parse(
@@ -318,34 +318,6 @@ test("enum string inputs are bare text and nested types stay JSON", () => {
   assert.equal(parseInputValue(`option<${decision}>`, '"approved"'), "approved");
 });
 
-test("automatic decisions survive terminal events and reject stale invocation updates", () => {
-  const reaction = golden.reactions[0];
-  const event = (kind, payload) => ({kind, payload, tag:null, sequence:1, protocol_version:1});
-  const running = applyDiagramEvent(golden, event("reaction_started", {reaction:reaction.id, invocation_id:"current"}));
-  const decision = {invocation_id:"current", profile:"artifact-requirement-v1", criterion:"Has a CTA", stage:"reasoning", reason:"Jev confidence 0.810 is below 0.95", route:null, confidence:0.81, selected_probability:0.86, sufficient_context:0.99};
-  const checking = applyDiagramEvent(running, event("decision_updated", {reaction:reaction.id, decision}));
-  assert.equal(checking.reactions[0].decision.reason, decision.reason);
-  const stale = applyDiagramEvent(checking, event("decision_updated", {reaction:reaction.id, decision:{...decision, invocation_id:"old", stage:"decided"}}));
-  assert.equal(stale.reactions[0].decision.stage, "reasoning");
-  const finished = applyDiagramEvent(checking, event("run_failed", {message:"fallback unavailable"}));
-  assert.equal(finished.reactions[0].decision.reason, decision.reason);
-  const next = applyDiagramEvent(finished, event("reaction_started", {reaction:reaction.id, invocation_id:"next"}));
-  assert.equal(next.reactions[0].decision, undefined);
-});
-
-
-test("builder schema bundles survive chat normalization and old proposals default to no files", () => {
-  const message = { sequence: 1, role: "assistant", text: "Schema workflow", progress: false,
-    design: { program: 'type Decision from "./schemas/decision.json"', files: { "schemas/decision.json": '{"type":"string","enum":["continue","defer"]}' }, inputs: {}, preview: golden } };
-  assert.deepEqual(assertChatMessage(message).design.files, message.design.files);
-  const legacy = structuredClone(message);
-  delete legacy.design.files;
-  assert.deepEqual(assertChatMessage(legacy).design.files, {});
-  for (const files of [[], { "schemas/decision.json": 42 }]) {
-    assert.throws(() => assertChatMessage({ ...message, design: { ...message.design, files } }), /files must map/);
-  }
-});
-
 test("a manual handoff timeout explains the missing operator response", () => {
   const error = "reaction 'prepare.reaction.0' invocation 'id': 'prepare.chatgpt' did not answer within 300s, and contract '( prepare.packet | prepare.blocked )' requires an effect";
   const agents = [{ name: "prepare.chatgpt", backend: "Web" }];
@@ -369,4 +341,16 @@ test("manual workflows have time for a handoff without changing automated defaul
   assert.equal(defaultRunTimeout([]), 300);
   assert.equal(defaultRunTimeout([{ backend: "ClaudeCode" }]), 300);
   assert.equal(defaultRunTimeout([{ backend: "Codex" }, { backend: "web" }]), 3600);
+});
+
+test("builder schema bundles survive chat normalization and old proposals default to no files", () => {
+  const message = { sequence: 1, role: "assistant", text: "Schema workflow", progress: false,
+    design: { program: 'type Decision from "./schemas/decision.json"', files: { "schemas/decision.json": '{"type":"string","enum":["continue","defer"]}' }, inputs: {}, preview: golden } };
+  assert.deepEqual(assertChatMessage(message).design.files, message.design.files);
+  const legacy = structuredClone(message);
+  delete legacy.design.files;
+  assert.deepEqual(assertChatMessage(legacy).design.files, {});
+  for (const files of [[], { "schemas/decision.json": 42 }]) {
+    assert.throws(() => assertChatMessage({ ...message, design: { ...message.design, files } }), /files must map/);
+  }
 });

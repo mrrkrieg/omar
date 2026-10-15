@@ -1,3 +1,14 @@
+// Native Jev review with explicit confidence routing and reasoning fallback.
+// Requires TYPESAFE_API_KEY and curl. OMAR_JEV_MODEL defaults to jev-1.13.0.
+// Provider failures reach reasoning only with OMAR_JEV_ON_ERROR=defer; otherwise
+// the backend stops. No retries. Each reasoning task has a 60-second deadline.
+//
+//   OMAR_JEV_ON_ERROR=defer omar run tests/topology/src/JevReview.omar --input "checks.request=Example request" --fg
+//
+// Replace the example criterion/checks with the task's actual requirements and
+// connect continued/repair/blocked to the real workflow's next/revision/stop paths.
+// The scores control routing; they do not establish measured model accuracy.
+
 type Decision from "./schemas/jev-decision.json"
 
 // This input is the complete output produced by the preceding workflow step.

@@ -400,6 +400,7 @@ pub fn pending_request(dir: &Path) -> Option<ControlOp> {
     Some(request.and_then(|r| r.op).unwrap_or(ControlOp::Stop))
 }
 
+#[cfg(test)]
 pub fn stop_requested(dir: &Path) -> bool {
     pending_request(dir) == Some(ControlOp::Stop)
 }

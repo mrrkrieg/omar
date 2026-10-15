@@ -721,7 +721,6 @@ fn launch(cli: &Cli, options: UpOptions, foreground: bool) -> Result<(Session, O
             json: foreground && cli.json,
         },
     )?;
-
     if foreground {
         session.pid = std::process::id();
         publish(&session)?;

@@ -1,14 +1,18 @@
 //! Jev Choice adapter for topology prompts. No coding-agent pane is spawned.
-use super::jev_transport::{self, Failure};
 use super::{Backend, Kind, Launch, TopologyInvocation};
 use crate::topology::string_enum;
 use anyhow::{bail, ensure, Context, Result};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
-#[cfg(test)]
-use std::time::Duration;
+use std::io::{Read, Write};
+use std::os::unix::process::CommandExt;
+use std::process::{Command, Stdio};
+use std::sync::mpsc;
+use std::thread;
+use std::time::{Duration, Instant};
 
 const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
+const HTTP_TIMEOUT: Duration = Duration::from_secs(20);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum OnError {
@@ -25,6 +29,39 @@ impl OnError {
         }
     }
 }
+
+// Messages are controlled by the adapter, never copied from provider bodies,
+// curl stderr, request headers, or credentials.
+#[derive(Debug)]
+struct Failure {
+    kind: &'static str,
+    message: &'static str,
+    http_status: Option<u16>,
+}
+
+impl Failure {
+    fn new(kind: &'static str, message: &'static str) -> Self {
+        Self {
+            kind,
+            message,
+            http_status: None,
+        }
+    }
+    fn evidence(&self) -> Value {
+        json!({"kind": self.kind, "message": self.message, "http_status": self.http_status})
+    }
+}
+
+impl std::fmt::Display for Failure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Jev {}: {}", self.kind, self.message)?;
+        if let Some(status) = self.http_status {
+            write!(f, " (HTTP {status})")?;
+        }
+        Ok(())
+    }
+}
+impl std::error::Error for Failure {}
 
 pub struct Jev;
 
@@ -90,7 +127,7 @@ fn invoke(invocation: &TopologyInvocation<'_>) -> Result<BTreeMap<String, Value>
             "OMAR_JEV_ON_ERROR=defer requires a defer enum value and an evidence string output"
         );
     }
-    let model = std::env::var("OMAR_JEV_MODEL").unwrap_or_else(|_| jev_transport::MODEL.into());
+    let model = std::env::var("OMAR_JEV_MODEL").unwrap_or_else(|_| "jev-1.13.0".into());
     ensure!(!model.trim().is_empty(), "OMAR_JEV_MODEL must not be empty");
     let criteria: BTreeMap<_, _> = options
         .iter()
@@ -98,16 +135,15 @@ fn invoke(invocation: &TopologyInvocation<'_>) -> Result<BTreeMap<String, Value>
         .collect();
     let request = json!({"model": model,
         "state": triggers, "questions": {"decision": {"type": "choice", "instructions": instructions, "criteria": criteria}, "sufficient_context": {"type": "noul", "instructions": "Does the supplied state contain enough evidence to choose a specific permitted outcome?"}}});
-    let result =
-        jev_transport::evaluate(&request, *timeout, MAX_RESPONSE_BYTES).and_then(|response| {
-            let choice = validate(&response, &options, &model).map_err(|_| {
-                Failure::new(
-                    "invalid_response",
-                    "Response does not satisfy the Choice contract",
-                )
-            })?;
-            Ok((choice, response))
-        });
+    let result = evaluate(&request, *timeout).and_then(|response| {
+        let choice = validate(&response, &options, &model).map_err(|_| {
+            Failure::new(
+                "invalid_response",
+                "Response does not satisfy the Choice contract",
+            )
+        })?;
+        Ok((choice, response))
+    });
     let (choice, mut response) = match result {
         Ok(answer) => answer,
         Err(error) if on_error == OnError::Defer => {
@@ -120,22 +156,158 @@ fn invoke(invocation: &TopologyInvocation<'_>) -> Result<BTreeMap<String, Value>
         Err(error) => return Err(error.into()),
     };
     response["context"] = json!(triggers);
-    let answer = &response["answers"]["decision"];
-    let eligible = choice != "defer"
-        && jev_transport::confident(
-            answer["confidence"].as_f64().unwrap_or(0.0),
-            answer["probabilities"][&choice].as_f64().unwrap_or(0.0),
-            response["answers"]["sufficient_context"]["noul"]
-                .as_f64()
-                .unwrap_or(0.0),
-        );
-    response["routing"] = json!({"threshold": jev_transport::THRESHOLD, "eligible": eligible});
     eprintln!("Jev selected {choice}");
     let mut writes = BTreeMap::from([(port.clone(), json!(choice))]);
     if let Some(evidence) = evidence {
         writes.insert(evidence.clone(), json!(response.to_string()));
     }
     Ok(writes)
+}
+
+fn evaluate(request: &Value, timeout: Duration) -> std::result::Result<Value, Failure> {
+    let budget = timeout.min(HTTP_TIMEOUT);
+    if budget.is_zero() {
+        return Err(Failure::new("timeout", "Invocation deadline is exhausted"));
+    }
+    let started = Instant::now();
+    let key = std::env::var("TYPESAFE_API_KEY")
+        .map_err(|_| Failure::new("configuration", "TYPESAFE_API_KEY is not set"))?;
+    if key.trim().is_empty() || key.contains(['\r', '\n', '\0']) {
+        return Err(Failure::new(
+            "configuration",
+            "TYPESAFE_API_KEY is empty or invalid",
+        ));
+    }
+    // Headers and body travel over stdin, not process arguments or files.
+    let config = format!("url = \"https://api.typesafe.ai/v1/systemone\"\nheader = {}\nheader = \"Content-Type: application/json\"\ndata = {}\n",
+        json!(format!("Authorization: Bearer {key}")), json!(request.to_string()));
+    let mut child = Command::new("curl")
+        .args([
+            "-q",
+            "--silent",
+            "--show-error",
+            "--connect-timeout",
+            "5",
+            "--max-time",
+            &budget.as_secs_f64().to_string(),
+            "--write-out",
+            "\n%{http_code}",
+            "--config",
+            "-",
+        ])
+        .process_group(0)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|_| {
+            Failure::new(
+                "configuration",
+                "Could not launch curl; ensure it is installed",
+            )
+        })?;
+    let pid = child.id();
+    let mut stdin = child.stdin.take().expect("piped curl stdin");
+    let stdout = child.stdout.take().expect("piped curl stdout");
+    let (written_tx, written_rx) = mpsc::channel();
+    let writer = thread::spawn(move || {
+        let _ = written_tx.send(stdin.write_all(config.as_bytes()));
+    });
+    let (body_tx, body_rx) = mpsc::channel();
+    let reader = thread::spawn(move || {
+        let mut body = Vec::new();
+        let result = stdout
+            .take((MAX_RESPONSE_BYTES + 1) as u64)
+            .read_to_end(&mut body);
+        let _ = body_tx.send(result.map(|_| body));
+    });
+    let mut status = None;
+    let mut body = None;
+    let mut written = false;
+    let transport = (|| loop {
+        if started.elapsed() >= budget {
+            return Err(Failure::new("timeout", "Jev request exceeded its deadline"));
+        }
+        if !written {
+            match written_rx.try_recv() {
+                Ok(Ok(())) => written = true,
+                Ok(Err(_)) | Err(mpsc::TryRecvError::Disconnected) => {
+                    return Err(Failure::new("transport", "Could not send the Jev request"))
+                }
+                Err(mpsc::TryRecvError::Empty) => {}
+            }
+        }
+        if body.is_none() {
+            match body_rx.try_recv() {
+                Ok(Ok(bytes)) if bytes.len() > MAX_RESPONSE_BYTES => {
+                    return Err(Failure::new(
+                        "invalid_response",
+                        "Jev response exceeds the size limit",
+                    ))
+                }
+                Ok(Ok(bytes)) => body = Some(bytes),
+                Ok(Err(_)) | Err(mpsc::TryRecvError::Disconnected) => {
+                    return Err(Failure::new("transport", "Could not read the Jev response"))
+                }
+                Err(mpsc::TryRecvError::Empty) => {}
+            }
+        }
+        if status.is_none() {
+            status = crate::process::child_exited(&child)
+                .map_err(|_| Failure::new("transport", "Could not inspect the HTTP process"))?;
+        }
+        if let (Some(exit), Some(body)) = (status, body.as_ref()) {
+            if written {
+                if !exit {
+                    return Err(Failure::new("transport", "Jev HTTP transport failed"));
+                }
+                return decode_http(body);
+            }
+        }
+        thread::sleep(Duration::from_millis(10));
+    })();
+    if transport.is_err() {
+        // Only this invocation's owned process group is terminated. Readers
+        // and writers must not outlive the deadline because a child held a pipe.
+        unsafe {
+            libc::kill(-(pid as i32), libc::SIGKILL);
+        }
+        let _ = child.kill();
+    }
+    // The non-reaping observation keeps the PID reserved until cleanup is done.
+    let exit = child.wait();
+    let _ = writer.join();
+    let _ = reader.join();
+    if exit.ok().and_then(|status| status.code()) == Some(28) {
+        return Err(Failure::new("timeout", "Jev request exceeded its deadline"));
+    }
+    transport
+}
+
+fn decode_http(bytes: &[u8]) -> std::result::Result<Value, Failure> {
+    let split = bytes
+        .iter()
+        .rposition(|byte| *byte == b'\n')
+        .ok_or_else(|| Failure::new("transport", "HTTP status was not reported"))?;
+    let status: u16 = std::str::from_utf8(&bytes[split + 1..])
+        .ok()
+        .and_then(|text| text.parse().ok())
+        .ok_or_else(|| Failure::new("transport", "HTTP status was not reported"))?;
+    if !(200..300).contains(&status) {
+        let (kind, message) = match status {
+            401 | 403 => ("authentication", "Jev rejected the API credentials"),
+            429 => ("rate_limit", "Jev rate limit exceeded"),
+            500..=599 => ("service", "Jev service is unavailable"),
+            _ => ("http", "Jev rejected the request"),
+        };
+        return Err(Failure {
+            kind,
+            message,
+            http_status: Some(status),
+        });
+    }
+    serde_json::from_slice(&bytes[..split])
+        .map_err(|_| Failure::new("invalid_response", "Jev response is not valid JSON"))
 }
 
 fn validate(response: &Value, options: &[String], model: &str) -> Result<String> {
@@ -199,6 +371,39 @@ fn validate(response: &Value, options: &[String], model: &str) -> Result<String>
 mod tests {
     use super::*;
     #[test]
+    fn failures_have_safe_typed_evidence_and_policy_is_explicit() {
+        assert!(matches!(OnError::parse("fail").unwrap(), OnError::Fail));
+        assert!(matches!(OnError::parse("defer").unwrap(), OnError::Defer));
+        assert!(OnError::parse("anything").is_err());
+        for (status, kind) in [
+            (401, "authentication"),
+            (429, "rate_limit"),
+            (503, "service"),
+            (400, "http"),
+        ] {
+            let bytes = format!("sensitive-provider-body\n{status}");
+            let error = decode_http(bytes.as_bytes()).unwrap_err();
+            assert_eq!(error.kind, kind);
+            assert_eq!(error.http_status, Some(status));
+            assert!(!error.to_string().contains("sensitive-provider-body"));
+            assert_eq!(error.evidence()["kind"], kind);
+        }
+        assert_eq!(
+            decode_http(b"not json\n200").unwrap_err().kind,
+            "invalid_response"
+        );
+        assert_eq!(decode_http(b"no status").unwrap_err().kind, "transport");
+    }
+
+    #[test]
+    fn zero_deadline_does_not_launch_http() {
+        let start = Instant::now();
+        let error = evaluate(&json!({}), Duration::ZERO).unwrap_err();
+        assert_eq!(error.kind, "timeout");
+        assert!(start.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
     fn unsupported_output_shapes_fail_before_http() {
         let triggers = BTreeMap::new();
         for effects in [
@@ -228,6 +433,16 @@ mod tests {
             validate(&response, &options, "test-jev").unwrap(),
             "proceed"
         );
+        assert!(validate(&response, &options, "other-model").is_err());
+        for context in [
+            Value::Null,
+            json!({"type":"choice","noul":0.99}),
+            json!({"type":"noul","noul":1.1}),
+        ] {
+            let mut bad = response.clone();
+            bad["answers"]["sufficient_context"] = context;
+            assert!(validate(&bad, &options, "test-jev").is_err());
+        }
         let mut missing_model = response.clone();
         missing_model["model"] = Value::Null;
         assert!(validate(&missing_model, &options, "test-jev").is_err());

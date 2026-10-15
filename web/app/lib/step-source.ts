@@ -81,9 +81,6 @@ export function locateStep(source: string, snapshot: DiagramSnapshot, reaction: 
     const body = all.findIndex((token, i) => i > close + 1 && token.string);
     // Constant strings in output contracts are deliberately left to source editing.
     if (body < 0 || all[body - 1]?.text === "=" || body >= end) return null;
-    // Jev's strings describe the profile and criterion, not the task prompt.
-    // Keep the gate's policy and routes together in the source editor.
-    if (reaction.decision_gate || all.some((token, i) => i > close + 1 && i < body && !token.string && token.text === "jev" && all[i + 1]?.text === "(")) return null;
     const deadline = all.findIndex((token, i) => i > close + 1 && i < body && !token.string && token.text === "within");
     const contractEnd = deadline < 0 ? body : deadline;
     const triggersSpan = { start: all[position + 2].end, end: all[close].start };

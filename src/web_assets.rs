@@ -86,7 +86,7 @@ mod tests {
     fn a_build_without_the_feature_says_so_rather_than_serving_nothing() {
         // Both halves have to agree: `is_bundled` is what decides whether
         // `--ui` opens a browser or explains itself.
-        assert_eq!(is_bundled(), !ASSETS.is_empty());
+        assert_eq!(is_bundled(), lookup("/").is_some());
         assert!(MISSING.contains("--features ui"));
     }
 

@@ -67,13 +67,6 @@ export async function startFakeServe({
     if (request.method === "GET" && url.pathname === "/health") {
       return json(response, 200, { status: "ok", protocol_version: 1 });
     }
-    if (request.method === "GET" && url.pathname === "/v1/assist/capabilities") {
-      return json(response, 200, {
-        schema_version: 1, available: true, configured: false, enabled: false,
-        key_present: false, model: "jev-1.13.0", modes: ["off", "shadow", "suggest"],
-        profiles: [], max_requests_per_run: 100, max_source_bytes: 65536,
-      });
-    }
     if (request.method === "POST" && url.pathname === "/v1/programs/check") {
       return readBody(request).then((body) => checkProgram(body, response));
     }
@@ -834,23 +827,6 @@ export async function startFakeServe({
       reaction.invocation_id = `inv-${index}`;
       publish(entry, "reaction_started", { reaction: reaction.id }, tag);
       await wait();
-
-      // UI fixture only: exercise a bounded decision's escalation and outcome.
-      // Rust tests verify actual Jev dispatch, routing and cancellation.
-      if (reaction.decision_gate) {
-        reaction.decision = {
-          invocation_id: reaction.invocation_id,
-          profile: reaction.decision_gate.profile,
-          criterion: reaction.decision_gate.criterion,
-          stage: "reasoning", reason: "Jev confidence 0.810 is below 0.95",
-          route: null, confidence: 0.81, selected_probability: 0.86, sufficient_context: 0.99,
-        };
-        publish(entry, "decision_updated", { reaction: reaction.id, decision: reaction.decision }, tag);
-        await wait();
-        reaction.decision = { ...reaction.decision, stage: "reasoned", route: "check.revise", reason: "The opening omits the founder. Return the draft for revision." };
-        publish(entry, "decision_updated", { reaction: reaction.id, decision: reaction.decision }, tag);
-        await wait();
-      }
 
       // A web-backed reaction parks until a client answers it, which is the
       // whole point of the backend. Driving straight past would let the run

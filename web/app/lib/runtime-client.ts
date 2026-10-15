@@ -212,7 +212,8 @@ export async function checkProgram(
     /**
      * Files the program imports, by the relative path it imports them under.
      * The daemon stages the program alone, so what it imports has to come
-     * with it. Builder proposals carry their imported schemas here.
+     * with it. The editor has no second file to send yet; a caller that has
+     * one passes it here.
      */
     files?: Record<string, string>;
   } = {},
@@ -526,7 +527,6 @@ export function subscribeToDiagram(
     "tag_advanced",
     "reaction_started",
     "reaction_completed",
-    "decision_updated",
     "run_completed",
     "run_failed",
     "run_paused",

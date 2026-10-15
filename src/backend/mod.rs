@@ -20,7 +20,6 @@ pub(crate) mod claude;
 pub(crate) mod codex;
 pub(crate) mod cursor;
 pub(crate) mod jev;
-pub(crate) mod jev_transport;
 pub(crate) mod managed;
 pub(crate) mod opencode;
 pub(crate) mod pi;
