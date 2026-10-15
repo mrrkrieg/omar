@@ -121,6 +121,7 @@ class JevBackendTests(unittest.TestCase):
                 line = next(line for line in result.stdout.splitlines() if line.startswith("Output review.evidence = "))
                 evidence = json.loads(json.loads(line.split(" = ",1)[1]))
                 self.assertEqual(evidence["context"], {"review.request":message})
+                self.assertEqual(evidence["instructions"], "Choose continue, stop, or defer.")
                 if kind is None:
                     self.assertEqual(evidence["model"], "jev-fixture-selected")
                     self.assertEqual(evidence["answers"]["decision"]["probabilities"], response["answers"]["decision"]["probabilities"])
@@ -205,7 +206,8 @@ main JevConfigurationTest { review = Review() }
                 (temp / "workflow.omar").write_text(program)
                 others = [value for value in ["continue", "stop", "defer"] if value != choice]
                 probabilities = {choice: probability, others[0]: (1-probability)/2, others[1]: (1-probability)/2}
-                response = {"model":"jev-1.13.0", "answers":{
+                # Provider fields must not replace the workflow's review criterion.
+                response = {"model":"jev-1.13.0", "instructions":"Provider-supplied replacement criterion", "answers":{
                     "decision":{"type":"choice", "choice":choice, "confidence":confidence, "probabilities":probabilities},
                     "sufficient_context":{"type":"noul", "noul":sufficiency}}}
                 body = json.dumps(response) if mode != "service_error" else "private-service-error"
@@ -217,6 +219,7 @@ main JevConfigurationTest { review = Review() }
                     "request=json.loads(json.loads(line[7:]))\n"
                     "assert request['model']=='jev-1.13.0'\n"
                     "assert request['questions']['sufficient_context']['type']=='noul'\n"
+                    + "Path(" + repr(str(temp / "request.json")) + ").write_text(json.dumps(request))\n"
                     + "Path(" + repr(str(temp / "calls")) + ").open('a').write('call\\n')\n"
                     + "sys.stdout.write(" + repr(body+"\n"+str(status)) + ")\n")
                 curl.chmod(0o700)
@@ -248,6 +251,20 @@ main JevConfigurationTest { review = Review() }
                 line = next(line for line in result.stdout.splitlines() if line.startswith(f'Output next.{branch} = '))
                 evidence = json.loads(json.loads(line.split(' = ', 1)[1]))
                 self.assertEqual(evidence['context'], {'checks.request' if deterministic_failure else 'review.request': message})
+                if not deterministic_failure:
+                    sent = json.loads((temp / "request.json").read_text())
+                    criterion = sent['questions']['decision']['instructions']
+                    self.assertIn('Mira Chen as the founder of Northstar', criterion)
+                    self.assertIn('Spring Summit', criterion)
+                    self.assertNotIn('Mira Chen', message)
+                    self.assertIn(criterion, sent['questions']['sufficient_context']['instructions'])
+                    self.assertEqual(evidence['instructions'], criterion)
+                    if fallback:
+                        # This is the exact port value connected to reasoning.request.
+                        line = next(line for line in result.stdout.splitlines() if line.startswith('Output decider.needs_review = '))
+                        fallback_input = json.loads(json.loads(line.split(' = ', 1)[1]))
+                        self.assertEqual(fallback_input['instructions'], criterion)
+                        self.assertEqual(fallback_input['context'], {'review.request': message})
                 if fallback:
                     self.assertEqual(evidence['reasoning']['outcome'], reasoned_choice)
                     self.assertEqual(bool(evidence['reasoning']['reason']), mode != 'reasoning_no_explanation')

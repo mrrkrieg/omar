@@ -133,8 +133,13 @@ fn invoke(invocation: &TopologyInvocation<'_>) -> Result<BTreeMap<String, Value>
         .iter()
         .map(|option| (option.clone(), option.clone()))
         .collect();
-    let request = json!({"model": model,
-        "state": triggers, "questions": {"decision": {"type": "choice", "instructions": instructions, "criteria": criteria}, "sufficient_context": {"type": "noul", "instructions": "Does the supplied state contain enough evidence to choose a specific permitted outcome?"}}});
+    let context_instructions = format!(
+        "Does the supplied state contain enough evidence to resolve this decision without guessing? Decision instructions: {instructions}"
+    );
+    let request = json!({"model": model, "state": triggers, "questions": {
+        "decision": {"type": "choice", "instructions": instructions, "criteria": criteria},
+        "sufficient_context": {"type": "noul", "instructions": context_instructions}
+    }});
     let result = evaluate(&request, *timeout).and_then(|response| {
         let choice = validate(&response, &options, &model).map_err(|_| {
             Failure::new(
@@ -155,6 +160,9 @@ fn invoke(invocation: &TopologyInvocation<'_>) -> Result<BTreeMap<String, Value>
         }
         Err(error) => return Err(error.into()),
     };
+    // Preserve the workflow's criterion for fallback, including provider failures.
+    // These fields are owned by the adapter, not taken from the provider response.
+    response["instructions"] = json!(instructions);
     response["context"] = json!(triggers);
     eprintln!("Jev selected {choice}");
     let mut writes = BTreeMap::from([(port.clone(), json!(choice))]);
