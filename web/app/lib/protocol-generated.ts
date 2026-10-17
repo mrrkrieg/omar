@@ -112,9 +112,9 @@ export type DiagramEvent = { protocol_version: number, sequence: number, team: s
 
 export type ProposedDesign = { program: string,
 /**
- * Imported schema and source files, relative to the program.
+ * Companion files relative to program.omar.
  */
-files: Record<string, string>, inputs: Record<string, unknown>,
+files?: Record<string, string>, inputs: Record<string, unknown>,
 /**
  * The compiled topology, so the operator sees what they are approving
  * before any run exists.

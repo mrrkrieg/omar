@@ -746,8 +746,8 @@ function StudioWorkspace({ serveUrl = "", historyUrl, designAgent, selectedId, o
       // they are looking at is what they are deploying.
       const record = await startRun(serveUrl, {
         program: source,
-        inputs: design.inputs,
         files: design.files,
+        inputs: design.inputs,
         timeout_seconds: options.timeoutSeconds,
         conversation_id: conversationIdRef.current ?? undefined,
         keep_workspaces: options.keepWorkspaces,
@@ -931,8 +931,8 @@ function StudioWorkspace({ serveUrl = "", historyUrl, designAgent, selectedId, o
         source,
         filename,
         {
-          files: design?.files,
           timeline: true,
+          files: design?.files,
           present: presentKey ? presentKey.split("\u0000") : [],
         },
         abort.signal,
@@ -966,7 +966,7 @@ function StudioWorkspace({ serveUrl = "", historyUrl, designAgent, selectedId, o
       clearTimeout(timer);
       abort.abort();
     };
-  }, [source, filename, design?.files, serveUrl, canRun, presentKey, switchingChat, phase]);
+  }, [source, filename, serveUrl, canRun, presentKey, switchingChat, phase, design?.files]);
 
   const isDeployed = run !== null;
   // The daemon's own word for it. Every terminal status replaces it, so the
@@ -1186,7 +1186,7 @@ function StudioWorkspace({ serveUrl = "", historyUrl, designAgent, selectedId, o
           <header className="conversation-header">
             {!isDemo && historyDrawer ? <button type="button" ref={historyButtonRef} className="history-button" onClick={() => setDrawerOpen((open) => !open)} aria-expanded={historyVisible} aria-controls="chat-history" aria-haspopup="dialog" aria-label="Open chat history"><SidebarIcon direction="open" /></button> : null}
             <div className="conversation-crumb"><WorkflowIcon name="workflow" size={16} /><span>Workflow builder</span><i>/</i><strong>{workflowNames[conversationId]?.name ?? snapshot?.team ?? (messages.length ? conversationTitle : "New workflow")}</strong></div>
-            <div className="conversation-actions"><button type="button" className="secondary-button files-button" disabled={isDemo || switchingChat || daemon.state !== "live"} onClick={() => setFilesOpen(true)} aria-haspopup="dialog">Files & versions</button><SettingsMenu />{snapshot ? <button type="button" className="conversation-fold" onClick={() => setBuilder(0)} aria-label="Hide conversation"><WorkflowIcon name="chevron" size={16} /></button> : null}</div>
+            <div className="conversation-actions"><button type="button" className="secondary-button files-button" disabled={isDemo || switchingChat || daemon.state !== "live"} onClick={() => setFilesOpen(true)} aria-haspopup="dialog">Files</button><SettingsMenu />{snapshot ? <button type="button" className="conversation-fold" onClick={() => setBuilder(0)} aria-label="Hide conversation"><WorkflowIcon name="chevron" size={16} /></button> : null}</div>
           </header>
           <div className="messages" ref={threadRef}>
             {messages.length > 0 ? <div className="date-divider">Conversation</div> : null}
@@ -1463,17 +1463,7 @@ function StudioWorkspace({ serveUrl = "", historyUrl, designAgent, selectedId, o
 
           {tab === "source" ? (
             <>
-            {design && Object.keys(design.files ?? {}).length > 0 ? (
-              <details className="imported-files">
-                <summary>Imported files ({Object.keys(design.files).length})</summary>
-                {Object.entries(design.files).map(([path, contents]) => (
-                  <details key={path}>
-                    <summary>{path}</summary>
-                    <pre>{contents}</pre>
-                  </details>
-                ))}
-              </details>
-            ) : null}
+            {Object.keys(design?.files ?? {}).length > 0 ? <button className="secondary-button" onClick={() => setFilesOpen(true)}>View companion files ({Object.keys(design?.files ?? {}).length})</button> : null}
             <OmarEditor
               source={source}
               filename={filename}
@@ -1528,7 +1518,7 @@ function StudioWorkspace({ serveUrl = "", historyUrl, designAgent, selectedId, o
         />
       ) : null}
 
-      {filesOpen ? <Artifacts key={serveUrl} serveUrl={serveUrl} runId={run?.run_id ?? null} onClose={() => setFilesOpen(false)} /> : null}
+      {filesOpen ? <Artifacts key={serveUrl} serveUrl={serveUrl} runId={run?.run_id ?? null} proposal={design ? { ...design, program: source } : null} onWorkflowChange={(workflow) => { setSource(workflow.program); setDesign((current) => current ? { ...current, ...workflow } : current); }} onClose={() => setFilesOpen(false)} /> : null}
       {terminalAgent ? (
         <AgentTerminal
           serveUrl={serveUrl}

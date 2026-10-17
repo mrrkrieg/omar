@@ -238,9 +238,9 @@ pub struct ChatMessage {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct ProposedDesign {
     pub program: String,
-    /// Imported schema and source files, relative to the program.
+    /// Companion files relative to program.omar.
     #[serde(default)]
-    #[ts(type = "Record<string, string>")]
+    #[ts(optional, type = "Record<string, string>")]
     pub files: BTreeMap<String, String>,
     #[serde(default)]
     #[ts(type = "Record<string, unknown>")]
@@ -942,6 +942,41 @@ fn workspace_request(
     if method == "GET" && path == "/v1/workspaces" {
         return Ok(json!({"workspaces": crate::workspace::list(root, context.ea_id)?}));
     }
+    if method == "POST" && path == "/v1/workspaces/workflow" {
+        let _operation = context
+            .chat_operation
+            .lock()
+            .expect("chat operation poisoned");
+        let request: CheckRequest = serde_json::from_slice(body)?;
+        let key = format!(
+            "workflow:{}",
+            crate::checkpoint::sha256(&serde_json::to_vec(
+                &json!({"program": request.program, "files": request.files})
+            )?)
+        );
+        if let Some(ws) = crate::workspace::list(root, context.ea_id)?
+            .into_iter()
+            .find(|ws| ws.deployment_id == key)
+        {
+            return Ok(json!({"workspace": ws}));
+        }
+        let staged = stage_program(&request.program, None, &request.files)
+            .map_err(|(_, error)| anyhow::anyhow!("{error}"))?;
+        let ws = crate::workspace::Workspace::create(root, context.ea_id, &key, "Workflow", None)?;
+        let result = (|| -> Result<()> {
+            fs::write(ws.worktree(root).join("program.omar"), &request.program)?;
+            stage_files(&ws.worktree(root), "program.omar", &request.files)
+                .map_err(anyhow::Error::msg)?;
+            ws.snapshot(root, "Workflow files")?;
+            Ok(())
+        })();
+        let _ = staged.finish(Ok(()));
+        if let Err(error) = result {
+            let _ = ws.remove(root);
+            return Err(error);
+        }
+        return Ok(json!({"workspace": ws}));
+    }
     let rest = path
         .strip_prefix("/v1/workspaces/")
         .context("unknown workspace route")?;
@@ -951,6 +986,66 @@ fn workspace_request(
         ws.ea_id == context.ea_id,
         "workspace belongs to another chat"
     );
+    if method == "GET" && action == "workflow" {
+        anyhow::ensure!(
+            ws.deployment_id.starts_with("workflow:"),
+            "not a workflow workspace"
+        );
+        let mut files = BTreeMap::new();
+        let mut pending = vec![String::new()];
+        let mut bytes = 0usize;
+        let mut entries_seen = 0usize;
+        while let Some(path) = pending.pop() {
+            let listing = crate::artifacts::browse(
+                &ws,
+                root,
+                &crate::artifacts::Selection {
+                    path: path.clone(),
+                    snapshot: None,
+                },
+            )?;
+            anyhow::ensure!(listing["truncated"] != true, "too many workflow files");
+            for entry in listing["entries"].as_array().context("invalid listing")? {
+                let name = entry["name"].as_str().context("invalid file name")?;
+                let file = if path.is_empty() {
+                    name.to_string()
+                } else {
+                    format!("{path}/{name}")
+                };
+                entries_seen += 1;
+                anyhow::ensure!(entries_seen <= 2000, "too many workflow files");
+                match entry["kind"].as_str() {
+                    Some("directory") => pending.push(file),
+                    Some("file") => {
+                        let preview = crate::artifacts::preview(
+                            &ws,
+                            root,
+                            &crate::artifacts::Selection {
+                                path: file.clone(),
+                                snapshot: None,
+                            },
+                        )?;
+                        anyhow::ensure!(
+                            preview["kind"] == "text",
+                            "workflow file {file} must be text under 512 KiB"
+                        );
+                        let text = preview["text"]
+                            .as_str()
+                            .context("invalid file contents")?
+                            .to_string();
+                        bytes += text.len();
+                        anyhow::ensure!(bytes <= 4 * 1024 * 1024, "workflow exceeds 4 MiB");
+                        files.insert(file, text);
+                    }
+                    _ => bail!("workflow contains unsupported file {file}"),
+                }
+            }
+        }
+        let program = files
+            .remove("program.omar")
+            .context("program.omar is missing")?;
+        return Ok(json!({"program": program, "files": files}));
+    }
     if method == "GET" && action.is_empty() {
         return Ok(
             json!({"workspace":ws, "worktree":ws.worktree(root), "snapshots":ws.snapshots(root)?}),
@@ -2072,7 +2167,9 @@ fn mission_control_envelope(text: &str, selection: &[String]) -> String {
          print here reaches nobody. Every question, status update, and answer must go \
          through `omar_reply`.\n\
          To offer a workflow, call the MCP tool `omar_propose_design` with a complete \
-         OMAR program and its imported files in the `files` map (relative path to UTF-8 contents). The operator approves and runs it; you do not.\n\n\
+         OMAR program. Include companion files in `files`, keyed by their relative paths \
+         (for example schemas/decision.json), so imported types compile. The entry \
+         source is program.omar. The operator approves and runs it; you do not.\n\n\
          {selected}{text}"
     )
 }
@@ -2149,7 +2246,7 @@ fn agent_proposal(context: &Arc<Context_>, body: &[u8]) -> (u16, Value) {
 
 fn compile_preview(program: &str, files: &BTreeMap<String, String>) -> Result<VmState> {
     let staged =
-        stage_program(program, None, files).map_err(|(_, body)| anyhow::anyhow!("{}", body))?;
+        stage_program(program, None, files).map_err(|(_, problem)| anyhow::anyhow!("{problem}"))?;
     let outcome = topology::load_staged_program(&staged.path)
         .and_then(|bytecode| topology::verify(&bytecode));
     staged.finish(outcome).map_err(anyhow::Error::msg)
@@ -2519,9 +2616,11 @@ fn stage_files(
         let path = Path::new(relative);
         let inside = !relative.is_empty()
             && !relative.contains('\\')
-            && path
-                .components()
-                .all(|part| matches!(part, Component::Normal(_) | Component::CurDir));
+            && path.components().all(|part| match part {
+                Component::Normal(name) => !name.to_string_lossy().eq_ignore_ascii_case(".git"),
+                Component::CurDir => true,
+                _ => false,
+            });
         if !inside {
             return Err(format!(
                 "'{relative}' is not a file a program can import: \
@@ -3587,6 +3686,24 @@ mod tests {
         let files = json!({
             "schemas/decision.json": r#"{"type":"string","enum":["approved","needs_revision"]}"#
         });
+        let companions: BTreeMap<String, String> = serde_json::from_value(files.clone()).unwrap();
+        assert!(compile_preview(program, &companions).is_ok());
+        assert!(compile_preview(program, &BTreeMap::new()).is_err());
+        let server = test_server();
+        let proposal = json!({
+            "token": server.agent_token, "program": program, "files": files,
+            "summary": "Review with a decision schema", "inputs": {"review.request": "hello"}
+        })
+        .to_string();
+        let response = request(
+            server.address(),
+            "POST",
+            "/v1/agent/proposals",
+            Some(&proposal),
+        );
+        assert!(response.starts_with("HTTP/1.1 202"), "{response}");
+        let saved = request(server.address(), "GET", "/v1/chat", None);
+        assert!(saved.contains("schemas/decision.json"), "{saved}");
         let body = json!({"program": program, "filename": "review.omar", "files": files});
         let (status, answer) = check_program(body.to_string().as_bytes());
         assert_eq!(status, 200);
@@ -3649,6 +3766,9 @@ mod tests {
             "../decision.json".to_string(),
         ] {
             let program = program.replace("./schemas/decision.json", &import);
+            let companions: BTreeMap<String, String> =
+                serde_json::from_value(files.clone()).unwrap();
+            assert!(compile_preview(&program, &companions).is_err());
             let body = json!({"program": program, "filename": "review.omar", "files": files});
             let (status, answer) = check_program(body.to_string().as_bytes());
             assert_eq!(status, 200);
@@ -3820,6 +3940,59 @@ mod tests {
             "{\"type\":\"object\"}".into(),
         )]);
         assert!(compile_preview(program, &invalid).is_err());
+    }
+
+    #[test]
+    fn workflow_editor_workspace_preserves_edits_and_imports_saved_files() {
+        let server = test_server();
+        let body = json!({"program": "main Review {}", "files": {"schemas/decision.json": "{\"type\":\"string\"}"}});
+        let create = || {
+            workspace_request(
+                &server.workspaces,
+                &server.context,
+                "POST",
+                "/v1/workspaces/workflow",
+                &serde_json::to_vec(&body).unwrap(),
+            )
+            .unwrap()
+        };
+        let created = create();
+        let id = created["workspace"]["id"].as_str().unwrap();
+        let ws = crate::workspace::Workspace::load(&server.context.omar_dir, id).unwrap();
+        let tree = ws.worktree(&server.context.omar_dir);
+        assert_eq!(
+            fs::read_to_string(tree.join("schemas/decision.json")).unwrap(),
+            "{\"type\":\"string\"}"
+        );
+        fs::write(tree.join("program.omar"), "main Edited {}").unwrap();
+        fs::write(tree.join("extra.json"), "{}").unwrap();
+        assert_eq!(
+            create()["workspace"]["id"],
+            id,
+            "reopening must keep saved edits"
+        );
+        let route = format!("/v1/workspaces/{id}/workflow");
+        let imported =
+            workspace_request(&server.workspaces, &server.context, "GET", &route, &[]).unwrap();
+        assert_eq!(imported["program"], "main Edited {}");
+        assert_eq!(imported["files"]["extra.json"], "{}");
+        assert_eq!(
+            imported["files"]["schemas/decision.json"],
+            body["files"]["schemas/decision.json"]
+        );
+        let malicious = json!({"program": "main Review {}", "files": {"../escape": "bad"}});
+        assert!(workspace_request(
+            &server.workspaces,
+            &server.context,
+            "POST",
+            "/v1/workspaces/workflow",
+            &serde_json::to_vec(&malicious).unwrap()
+        )
+        .is_err());
+        std::os::unix::fs::symlink("/etc/passwd", tree.join("link")).unwrap();
+        assert!(
+            workspace_request(&server.workspaces, &server.context, "GET", &route, &[]).is_err()
+        );
     }
 
     #[test]
@@ -4346,8 +4519,11 @@ while True:
             )
             .unwrap();
         let proposal = ProposedDesign {
+            files: BTreeMap::from([(
+                "schemas/decision.json".into(),
+                "{\"type\":\"string\"}".into(),
+            )]),
             program: include_str!("../web/tests/fixtures/review-flow.omar").into(),
-            files: BTreeMap::new(),
             inputs: BTreeMap::from([("flow.request".into(), json!("release evidence"))]),
             preview: serde_json::from_str(include_str!(
                 "../web/tests/fixtures/diagram-snapshot.v1.json"
@@ -4368,7 +4544,9 @@ while True:
         let resumed = Serve::start("127.0.0.1:0".parse().unwrap(), &config, dir.path(), 0).unwrap();
         let body = request(resumed.address(), "GET", "/v1/chat", None);
         assert!(
-            body.contains("Saved proposal") && body.contains("release evidence"),
+            body.contains("Saved proposal")
+                && body.contains("release evidence")
+                && body.contains("schemas/decision.json"),
             "{body}"
         );
         assert_eq!(resumed.context.history.lock().unwrap().active_id, first_id);

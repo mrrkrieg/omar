@@ -22,10 +22,11 @@ test("builder carries the reviewed schema bundle into validation and deployment"
     expect(proposed.ok()).toBe(true);
     expect((await checked).postDataJSON().files).toEqual(files);
     await page.getByRole("button", { name: "Show the source pane" }).click();
-    const imported = page.locator(".imported-files");
-    await imported.locator(":scope > summary").click();
-    await imported.getByText("schemas/jev-decision.json", { exact: true }).click();
-    await expect(imported.locator("pre")).toContainText('"defer"');
+    await page.getByRole("button", { name: "View companion files (1)" }).click();
+    const imported = page.getByRole("dialog", { name: "Files", exact: true });
+    await imported.getByRole("button", { name: "schemas/jev-decision.json", exact: true }).click();
+    await expect(imported.getByLabel("File preview")).toContainText('"defer"');
+    await page.getByRole("button", { name: "Close files", exact: true }).click();
     await expect(page.getByRole("dialog")).toHaveCount(0);
     await expect(page.locator("vite-error-overlay")).toHaveCount(0);
     await page.screenshot({ path: testInfo.outputPath("schema-review.png"), fullPage: true });

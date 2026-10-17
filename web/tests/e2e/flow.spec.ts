@@ -142,7 +142,7 @@ test("the diagram reflects live reaction state from the run", async ({ page }) =
   const first = reactions.first();
   await expect(first.locator(".omar-reaction-index")).toHaveText("01");
   await expect(first.locator(".omar-reaction-name")).toHaveText("planner");
-  await expect(first.locator(".omar-reaction-description")).toHaveText(/^Draft a release plan for.*…$/);
+  await expect(first.locator(".omar-reaction-description")).toHaveText(/^Draft a release plan.*…$/);
   await expect(reactions.nth(1).locator(".omar-reaction-description")).toHaveText("Critique the plan: plan");
   // Reactions are anonymous in OMAR, so the agent is the headline.
   await expect(page.locator(".omar-reactions")).toContainText("planner");
@@ -316,6 +316,9 @@ test("Enter sends, modified Enter writes a new line", async ({ page }) => {
   await composer.press("Enter");
   await expect(composer).toHaveValue("");
   await expect(page.locator(".messages")).toContainText("first line second line");
+  // The sent message keeps its line break rather than collapsing it.
+  const sent = page.locator(".message.operator p").last();
+  expect(await sent.evaluate((el) => (el as HTMLElement).innerText)).toBe("first line\nsecond line");
 });
 
 test("waiting holds one verb per turn and changes between turns", async ({
@@ -666,7 +669,7 @@ test("the studio opens on a centred prompt, then settles into a thread", async (
   // window size, with room for the larger chat text.
   expect(opening.width).toBe(500);
   expect(opening.height).toBeLessThan(130);
-  await expect(composer.locator("textarea")).toHaveCSS("font-size", "14px");
+  await expect(composer.locator("textarea")).toHaveCSS("font-size", "16px");
 
   await composer.getByLabel("Describe a workflow").fill("Review the release plan");
   await page.keyboard.press("Enter");
@@ -674,8 +677,8 @@ test("the studio opens on a centred prompt, then settles into a thread", async (
   // Once there is a conversation it belongs at the bottom, under the thread.
   await expect(page.locator(".messages")).toContainText("Review the release plan");
   await expect(page.locator(".builder-panel")).not.toHaveClass(/opening/);
-  await expect(page.locator(".message-content > p").first()).toHaveCSS("font-size", "13px");
-  await expect(page.locator(".message.assistant:not(.progress) .message-body").first()).toHaveCSS("font-size", "13px");
+  await expect(page.locator(".message-content > p").first()).toHaveCSS("font-size", "16px");
+  await expect(page.locator(".message.assistant:not(.progress) .message-body").first()).toHaveCSS("font-size", "16px");
   const threaded = (await composer.boundingBox())!;
   expect(threaded.y).toBeGreaterThan(opening.y + 100);
   // The compact size belongs to the opening screen only; in a thread the box
@@ -835,14 +838,16 @@ test("checkpoints are off unless enabled", async ({ page }) => {
 test("the file viewer shows the current run's instances only", async ({ page }) => {
   await useFakeServe(page);
   await draftUntilProposed(page);
-  // Before a run there is nothing of this chat's to show, whatever the EA holds.
-  await page.getByRole("button", { name: "Files & versions" }).click();
-  const viewer = page.getByRole("dialog", { name: "Files & versions" });
+  // The workflow is available before deployment; run workspaces are still empty.
+  await page.getByRole("button", { name: "Files" }).click();
+  const viewer = page.getByRole("dialog", { name: "Files" });
+  await expect(viewer.getByRole("tab", { name: "Workflow", exact: true })).toHaveAttribute("aria-selected", "true");
+  await viewer.getByRole("tab", { name: "Run workspaces & versions" }).click();
   await expect(viewer).toContainText("No run in this chat yet");
   await viewer.getByRole("button", { name: "Close files" }).click();
   await deploy(page);
   await expect(page.locator(".connection")).toContainText("observing");
-  await page.getByRole("button", { name: "Files & versions" }).click();
+  await page.getByRole("button", { name: "Files" }).click();
   const instances = viewer.getByLabel("Team workspace");
   await expect(instances.locator("option")).toHaveCount(1);
   await expect(instances.locator("option")).toContainText("leader");
@@ -2562,8 +2567,8 @@ test("workspace files refresh, preview snapshots, and dismiss on backdrop or Esc
   await draftUntilProposed(page);
   await deploy(page);
   await expect(page.locator(".connection")).toContainText("observing");
-  await page.getByRole("button", { name: "Files & versions" }).click();
-  const modal = page.getByRole("dialog", { name: "Files & versions" });
+  await page.getByRole("button", { name: "Files" }).click();
+  const modal = page.getByRole("dialog", { name: "Files" });
   await modal.getByRole("button", { name: /CLAUDE.md/ }).click();
   await expect(modal.getByLabel("File preview")).toContainText("Current instructions");
   await modal.getByLabel("File version").selectOption("snap-one");
@@ -2577,8 +2582,87 @@ test("workspace files refresh, preview snapshots, and dismiss on backdrop or Esc
   await page.screenshot({ path: "/tmp/omar-spec-files.png" });
   await page.mouse.click(5, 5);
   await expect(modal).toBeHidden();
-  await expect(page.getByRole("button", { name: "Files & versions" })).toBeFocused();
-  await page.getByRole("button", { name: "Files & versions" }).click();
+  await expect(page.getByRole("button", { name: "Files" })).toBeFocused();
+  await page.getByRole("button", { name: "Files" }).click();
   await page.keyboard.press("Escape");
   await expect(modal).toBeHidden();
+});
+
+test("companion proposal files can be viewed and reach checks and deployment", async ({ page, request }) => {
+  await useFakeServe(page);
+  await draftUntilProposed(page);
+  const files = { "schemas/decision.json": '{"type":"string","enum":["approved"]}' };
+  const program = `type Decision from "./schemas/decision.json"
+
+team Review[worker : Stub] {
+  input request : string
+  output result : Decision
+  task worker(request) -> result "Review $(request)"
+}
+
+main ReviewRun { review = Review() }`;
+  const result = await request.post(`${fake.url}/v1/agent/proposals`, { data: {
+    token: fake.agentToken, program,
+    files, summary: "A proposal with a schema", inputs: { "review.request": "hello" },
+  } });
+  expect(result.ok()).toBeTruthy();
+  await expect(page.getByText("A proposal with a schema", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Files" }).click();
+  const dialog = page.getByRole("dialog", { name: "Files" });
+  await dialog.getByRole("button", { name: "schemas/decision.json", exact: true }).click();
+  await expect(dialog.getByLabel("File preview")).toContainText(files["schemas/decision.json"]);
+  await dialog.getByRole("button", { name: "program.omar", exact: true }).click();
+  await expect(dialog.getByLabel("File preview")).toContainText("main ReviewRun");
+  await dialog.getByRole("button", { name: "Close files" }).click();
+  await page.getByRole("button", { name: "Show the source pane" }).click();
+  const check = page.waitForRequest((r) => r.url().endsWith("/v1/programs/check") && r.postDataJSON()?.files?.["schemas/decision.json"] === files["schemas/decision.json"]);
+  await page.getByLabel("OMAR program").fill(program.replace('"Review $(request)"', '"Edited $(request)"'));
+  await check;
+  const deployment = page.waitForRequest((r) => r.url().endsWith("/v1/runs") && r.method() === "POST");
+  await deploy(page);
+  expect((await deployment).postDataJSON().files).toEqual(files);
+});
+
+
+test("workflow tabs support keyboard navigation and saved VS Code edits reach deployment", async ({ page }) => {
+  let workspacePayload: {program: string; files?: Record<string, string>} | undefined;
+  const savedFiles = { "schemas/edited.json": '{"type":"string"}' };
+  await page.route("**/v1/workspaces/workflow", (route) => {
+    workspacePayload = route.request().postDataJSON();
+    return route.fulfill({ json: { workspace: { id: "workflow-test" } } });
+  });
+  await page.route("**/v1/workspaces/workflow-test/editor", (route) => route.fulfill({ json: { url: "about:blank" } }));
+  await page.route("**/v1/workspaces/workflow-test/workflow", (route) => route.fulfill({ json: { program: workspacePayload!.program, files: savedFiles } }));
+  await useFakeServe(page);
+  await draftUntilProposed(page);
+  await page.getByRole("button", { name: "Files" }).click();
+  const dialog = page.getByRole("dialog", { name: "Files" });
+  const workflow = dialog.getByRole("tab", { name: "Workflow", exact: true });
+  const workspaces = dialog.getByRole("tab", { name: "Run workspaces & versions" });
+  await expect(workflow).toHaveAttribute("aria-selected", "true");
+  const editorButton = dialog.getByRole("button", { name: "Open in Web VS Code", exact: true });
+  const before = await editorButton.boundingBox();
+  expect(before).not.toBeNull();
+  await workflow.press("ArrowRight");
+  await expect(editorButton).toBeVisible();
+  const after = await editorButton.boundingBox();
+  expect(after?.x).toBeCloseTo(before!.x, 0);
+  expect(after?.y).toBeCloseTo(before!.y, 0);
+  await expect(workspaces).toBeFocused();
+  await expect(workspaces).toHaveAttribute("aria-selected", "true");
+  await workspaces.press("ArrowLeft");
+  await expect(workflow).toBeFocused();
+  const popup = page.waitForEvent("popup");
+  await dialog.getByRole("button", { name: "Open in Web VS Code", exact: true }).click();
+  const editor = await popup;
+  await expect(dialog.getByRole("link", { name: "Reopen editor" })).toBeVisible();
+  expect(workspacePayload?.program).toContain("main");
+  await dialog.getByRole("button", { name: "Apply saved changes" }).click();
+  await dialog.getByRole("button", { name: "schemas/edited.json", exact: true }).click();
+  await expect(dialog.getByLabel("File preview")).toContainText(savedFiles["schemas/edited.json"]);
+  await editor.close();
+  await dialog.getByRole("button", { name: "Close files" }).click();
+  const deployment = page.waitForRequest((r) => r.url().endsWith("/v1/runs") && r.method() === "POST");
+  await deploy(page);
+  expect((await deployment).postDataJSON().files).toEqual(savedFiles);
 });
