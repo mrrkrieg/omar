@@ -23,6 +23,17 @@ use std::sync::{
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
+/// Runtime identity must not leak into a new session, but adapter settings
+/// are user configuration and must survive foreground/background launches.
+fn runtime_environment_key(key: &std::ffi::OsStr) -> bool {
+    (key.to_string_lossy().starts_with("OMAR_")
+        && key != "OMAR_JEV_MODEL"
+        && key != "OMAR_JEV_ON_ERROR")
+        || key == "TMUX"
+        || key == "TMUX_PANE"
+        || key == "OMARC_BIN"
+}
+
 const PROTOCOL: u32 = 1;
 const MAX_FRAME: u64 = 8 * 1024 * 1024;
 
@@ -711,11 +722,7 @@ fn launch(cli: &Cli, options: UpOptions, foreground: bool) -> Result<(Session, O
             .arg(&directory)
             .current_dir(&workdir);
         for (key, _) in std::env::vars_os() {
-            if key.to_string_lossy().starts_with("OMAR_")
-                || key == "TMUX"
-                || key == "TMUX_PANE"
-                || key == "OMARC_BIN"
-            {
+            if runtime_environment_key(&key) {
                 foreground.env_remove(key);
             }
         }
@@ -748,11 +755,7 @@ fn spawn_daemon(
         .stdout(log.try_clone()?)
         .stderr(log);
     for (key, _) in std::env::vars_os() {
-        if key.to_string_lossy().starts_with("OMAR_")
-            || key == "TMUX"
-            || key == "TMUX_PANE"
-            || key == "OMARC_BIN"
-        {
+        if runtime_environment_key(&key) {
             command.env_remove(key);
         }
     }
@@ -1648,6 +1651,34 @@ pub async fn dispatch(cli: &Cli) -> Option<Result<()>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn adapter_settings_survive_new_sessions_but_runtime_identity_does_not() {
+        for name in [
+            "OMAR_JEV_MODEL",
+            "OMAR_JEV_ON_ERROR",
+            "TYPESAFE_API_KEY",
+            "PATH",
+        ] {
+            assert!(
+                !runtime_environment_key(std::ffi::OsStr::new(name)),
+                "{name}"
+            );
+        }
+        for name in [
+            "OMAR_HOME",
+            "OMAR_SESSION_ID",
+            "OMAR_STATE_DIR",
+            "OMARC_BIN",
+            "TMUX",
+            "TMUX_PANE",
+        ] {
+            assert!(
+                runtime_environment_key(std::ffi::OsStr::new(name)),
+                "{name}"
+            );
+        }
+    }
 
     #[test]
     fn help_is_hierarchical_without_session_resolution() {
