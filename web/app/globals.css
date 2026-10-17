@@ -2542,7 +2542,6 @@ h2 {
 .deploy-invalid { color: var(--danger, #e5484d); }
 
 /* Workspace artifacts are a full-width inspector; editing opens separately. */
-.workspace-file-action { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 18px 0; }
 
 .settings-menu { position: relative; }
 .settings-trigger {
