@@ -6,7 +6,7 @@ import type { ChatMessage as ChatMessageModel } from "./lib/protocol";
 import { splitQuote } from "./quote-selection";
 
 /**
- * Assistant messages are markdown — the EA writes bold, inline code, fenced
+ * Chat messages are markdown — participants write bold, inline code, fenced
  * diagrams and lists, and reads as noise unrendered.
  *
  * `react-markdown` does not render raw HTML, which matters here: this is model
@@ -28,16 +28,10 @@ export function ChatMessage({ message }: { message: ChatMessageModel }) {
           // Kept on the message so the thread still shows what "this one" meant.
           <p className="message-selection">[{message.selection.join(", ")}]</p>
         ) : null}
-        {message.role === "assistant" ? (
-          <div className="message-body">
-            <Markdown remarkPlugins={[remarkGfm]}>{message.text}</Markdown>
-          </div>
-        ) : (
-          <>
-            {quote ? <blockquote className="message-quote">{quote}</blockquote> : null}
-            <p className="message-text">{body}</p>
-          </>
-        )}
+        {quote ? <blockquote className="message-quote">{quote}</blockquote> : null}
+        <div className="message-body">
+          <Markdown remarkPlugins={[remarkGfm]}>{body}</Markdown>
+        </div>
       </div>
     </article>
   );
