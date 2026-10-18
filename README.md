@@ -2,9 +2,10 @@
 
 <img src="img/full-black-banner.jpg" alt="OMAR" width="250">
 
-**LLM agents are unpredictable. Their coordination doesn't have to be.**
-
-**`omar` delivers deterministic, formally specified orchestration for multi-agent systems.**
+<p align="center">
+<strong>Say no to agent “swarms”.<br>
+Deploy deterministic, verifiable, programmable agentic workflows.</strong>
+</p>
 
 <p align="center">
   <a href="https://omar.rs">omar.rs</a>&nbsp; • &nbsp;
@@ -14,28 +15,34 @@
   <a href="https://discord.gg/X76PSzmfWr"><img src="https://img.shields.io/discord/1467663881588572182?label=Discord&logo=discord&logoColor=white&color=5865F2&cacheSeconds=60" alt="Discord" valign="middle"/></a>
 </p>
 
-<p align="center">
-<img src="./img/web.gif" alt="Web UI" valign="middle"/>
-Web UI
-</p>
+</div>
+
+<div align="center">
 
 <p align="center">
-<img src="./img/demo.gif" alt="Terminal UI" valign="middle"/>
-Terminal UI
+<img src="./img/web.gif" alt="Web UI" valign="middle"/>
+Mission Control
 </p>
 
 </div>
 
+OMAR (Open Multi-Agent Runtime) coordinates coding agents through programmable workflows. Describe a task in Mission Control, review the team diagram, and deploy it with live visibility and terminal access. Compiled `.omar` programs define typed inputs, outputs, and handoffs with deterministic scheduling; model responses and tool actions can still vary. See the [language specification](lang/spec.md).
+
 ## Features
 
-- **Deep hierarchies**: Agents managing agents, just like a company.
-- **Heterogeneity**: Let `claude`, `codex`, and other agents collaborate as a team.
-- **Full control**: Talk to and control any subagent you want.
-- **Life span**: Long-running or ephemeral agents, your choice.
-- **Customization**: Support all `tmux` commands you love.
-- **Team workspaces**: Each topology team instance gets a versioned `worktree/` and disposable `temp/`; inspect and restore file versions from Mission Control or `omar workspace`.
+- 📜 **Explicit coordination contracts**: Declare typed inputs and outputs, triggers, and permitted output writes. OMAR provides system-level determinism for scheduling and handoffs, with compiler validation and runtime enforcement of output contracts.
 
-Other features include computer use and more.
+- 🤝 **Mixed agent teams**: Put Claude Code, Codex, Cursor, OpenCode, Antigravity, and Pi in the same workflow. Choose a backend for each role using the [supported agent backends](#supported-agent-backends).
+
+- 🪆 **Teams within teams**: Compose reusable, parameterized teams into deeper hierarchies. Build pipelines, parallel branches, and feedback loops with explicit connections between them.
+
+- 🔎 **Live visibility and direct access**: Follow execution status and values in Mission Control's live diagram. Open an individual agent's terminal to inspect its session and interact directly.
+
+- 🧠 **Model heterogeneity**: Combine fast System I models such as Jev with System II reasoning models in the same workflow.
+
+- ⏯️ **Checkpointed workflows**: Pause and resume workflows at well-defined checkpoints between logical tags.
+
+- 🛠️ **Flexible sessions and familiar tools**: Run long-lived or task-specific agents, with terminal access and the `tmux` controls you already use.
 
 ## Installation
 
@@ -87,17 +94,29 @@ browser leaves the runtime and its topologies running. Stop it with `omar down -
 
 #### Step 2: Describe a workflow
 
-Type what the team should do. The assistant drafts an OMAR program and shows you
-the topology it compiles to.
-Nothing runs until you press **Confirm deploy**,
-then the diagram goes live.
+Type what the team should do. For example:
 
-### Terminal client
+> Create a team that drafts and reviews a technical design. Use Claude Code to
+> write a proposal from my brief, then pass it to Codex to review the tradeoffs
+> and missing requirements. Send both the proposal and review to me for a final
+> decision in Mission Control.
 
-Run `omar attach -s dev --tui` (`--ea NAME` picks an EA), or `omar up --tui` to
-start and attach in one go. The terminal dashboard opens
-inside the session's tmux server. `z` detaches and the runtime keeps every
-workload running; `Q` stops the session after confirmation.
+The assistant drafts an OMAR program and shows you the team diagram it compiles
+to. Inspect the roles and handoffs, then press **Confirm deploy** to start the
+workflow. The diagram goes live as agents work and pass results between steps.
+This example requires both Claude Code and Codex to be installed and configured.
+
+### Session commands
+
+| Command | What it does |
+|---------|--------------|
+| `omar up --name dev` | Start a background session, or restart the stopped session named `dev`. |
+| `omar attach -s dev --web` | Open Mission Control for that session. Use `--tui` for the terminal UI. |
+| `omar down -s dev` | Stop the session and keep its state. |
+| `omar rm -s dev` | Remove the session and its state, stopping it first if running. |
+
+Closing the browser or detaching leaves the session running. Use `omar --help`
+for more commands and `omar <command> --help` for options.
 
 ### Terminal UI
 
@@ -143,55 +162,8 @@ Shutdown the test project and its agents.
 | [Google Antigravity CLI](https://antigravity.google/product/antigravity-cli) | `omar -a agy up` |
 | [Pi](https://pi.dev) | `omar -a pi up` |
 
-Each `omar -a <backend> up` starts a new independent session with EA 0.
-Add `--name dev` to name it, and `--tui` or `--web` to attach at once.
-Sessions work like containers: `omar down` stops one and keeps its state,
-`omar up --name dev` starts it again, and `omar rm` removes it (a running one
-is killed first). Add another EA inside it
-with `omar --session dev ea create --name Research --agent codex`.
-Target it with `omar --session dev --ea Research ...`; this does not change
-another client's selection. `omar run team.omar -s dev` admits a workflow and
-returns; `--fg` keeps it in the foreground until it ends and prints the final
-record, and Ctrl-C detaches without stopping it. Without a session, `run`
-creates one for the workflow and removes it again when a foreground run ends.
-Checkpointing belongs to the workflow: `--checkpoint-period` on `run`, and
-the `omar checkpoint` commands while it runs.
-
-### Upgrading omar with sessions running
-
-The package manager replaces the binary; omar has no upgrade command. A
-running session keeps executing the build it started with, so moving it to
-the new build is a restart of that session, with its workflows paused across
-it:
-
-```
-omar pause Ticker --wait -s dev   # checkpoint and park the workflows you care about
-brew upgrade omar                 # or the install script
-omar down -s dev                  # workflows still running pause at their next tag boundary
-omar up --name dev                # the same session, on the new build, at its previous URL
-omar resume Ticker -s dev         # continues from the checkpoint; the run keeps its id
-```
-
-`omar ls` shows each session's workflows (`1 running, 1 paused`), for stopped
-sessions too. `omar up --name` on a stopped session reports the build it
-moved to and the paused workflows waiting for `omar resume`; nothing resumes
-on its own. A forced stop (`down
---force`, a crash) leaves a workflow interrupted mid-run: the restart pauses
-it at its last checkpoint, and the tags since are lost. Other sessions are
-never touched.
-
-Codex launch commands no longer disable the alternate screen. OMAR does not
-add `--no-alt-screen`; an explicit flag in a custom command is still respected.
-Remove that flag from an existing `default_command` to try the alternate screen,
-then launch a new session (running sessions keep their original arguments).
-
-The web terminal forwards Escape to the agent. Close with the **Close** button,
-**Ctrl+Shift+Escape**, or a click on the backdrop. New sessions use the launching
-terminal's dimensions, or 120×40 when headless. Web attachments start at the
-panel's measured size. After the last viewer in a daemon closes, OMAR restores
-the original size and sizing policy if no external client remains and the
-policy has not been changed. Concurrent clients still share tmux's window and
-its sizing policy; a manually sized window stays manual.
+Each `omar -a <backend> up` starts a new independent session. Add `--name dev`
+to name it, and `--web` or `--tui` to open a client immediately.
 
 ## License
 
