@@ -1234,11 +1234,13 @@ fn handle_client(mut stream: TcpStream, workspaces: Arc<Workspaces>) -> Result<(
         }
     };
 
-    // History removal is a local, recoverable mutation; apply the same origin
+    // History mutations apply the same origin
     // checks as workspace editing before accepting a simple cross-site POST.
     if method == "POST"
         && path.starts_with("/v1/chats/")
-        && (path.ends_with("/remove") || path.ends_with("/restore"))
+        && ["/remove", "/archive", "/restore", "/delete"]
+            .iter()
+            .any(|action| path.ends_with(action))
     {
         let local_hosts = [
             context.address.to_string(),
@@ -1447,20 +1449,39 @@ fn handle_client(mut stream: TcpStream, workspaces: Arc<Workspaces>) -> Result<(
             }
         }
         ("GET", "/v1/chats") => (200, workspaces.list()),
-        ("GET", "/v1/chats/removed") => (
+        ("GET", "/v1/chats/removed" | "/v1/chats/archived") => (
             200,
             json!({"conversations": workspaces.history.lock().expect("history poisoned").removed()}),
         ),
         ("POST", rest)
             if rest.starts_with("/v1/chats/")
-                && (rest.ends_with("/remove") || rest.ends_with("/restore")) =>
+                && ["/remove", "/archive", "/restore", "/delete"]
+                    .iter()
+                    .any(|action| rest.ends_with(action)) =>
         {
             let action = rest.rsplit('/').next().unwrap();
             let id = rest
                 .trim_start_matches("/v1/chats/")
                 .strip_suffix(&format!("/{action}"))
                 .unwrap();
-            remove_or_restore_chat(&workspaces, id, action == "remove")
+            if action == "delete" {
+                if content_length > MAX_BODY_BYTES {
+                    (413, json!({"error": "request too large"}))
+                } else {
+                    let body: Value =
+                        serde_json::from_slice(&read_body(content_length)?).unwrap_or(Value::Null);
+                    if body["confirm"] != true {
+                        (
+                            400,
+                            json!({"error": "Confirm permanent deletion of this archived workflow."}),
+                        )
+                    } else {
+                        delete_archived_chat(&workspaces, id)
+                    }
+                }
+            } else {
+                remove_or_restore_chat(&workspaces, id, action != "restore")
+            }
         }
         ("POST", "/v1/chats") => {
             let _ = read_body(content_length)?;
@@ -2006,7 +2027,7 @@ impl Workspaces {
                 .lock()
                 .expect("history poisoned")
                 .is_removed(id),
-            "This workflow was removed. Restore it from Removed workflows."
+            "This workflow is archived or deleted. Restore archived workflows from Archive."
         );
         if let Some(context) = contexts.get(id) {
             return Ok(context.clone());
@@ -2080,11 +2101,7 @@ impl Workspaces {
             (
                 history.active_id.clone(),
                 history.list(),
-                history
-                    .removed()
-                    .iter()
-                    .map(|chat| chat.id.clone())
-                    .collect::<Vec<_>>(),
+                history.hidden_ids(),
             )
         };
         let stored = stored_runs(&self.root.omar_dir);
@@ -2157,6 +2174,17 @@ fn remove_or_restore_chat(workspaces: &Arc<Workspaces>, id: &str, removed: bool)
     {
         return (404, json!({"error": "unknown chat"}));
     }
+    if workspaces
+        .history
+        .lock()
+        .expect("history poisoned")
+        .is_deleted(id)
+    {
+        return (
+            404,
+            json!({"error": "This workflow was permanently deleted."}),
+        );
+    }
     let result = if removed {
         let context = match workspaces.get(id) {
             Ok(context) => context,
@@ -2169,7 +2197,7 @@ fn remove_or_restore_chat(workspaces: &Arc<Workspaces>, id: &str, removed: bool)
         if context.chat.lock().expect("chat poisoned").busy {
             return (
                 409,
-                json!({"error": "Wait for the assistant to finish before removing this workflow."}),
+                json!({"error": "Wait for the assistant to finish before archiving this workflow."}),
             );
         }
         if context
@@ -2181,7 +2209,7 @@ fn remove_or_restore_chat(workspaces: &Arc<Workspaces>, id: &str, removed: bool)
         {
             return (
                 409,
-                json!({"error": "Stop this workflow before removing it from history."}),
+                json!({"error": "Stop this workflow before archiving it."}),
             );
         }
         workspaces
@@ -2196,6 +2224,61 @@ fn remove_or_restore_chat(workspaces: &Arc<Workspaces>, id: &str, removed: bool)
             .expect("history poisoned")
             .set_removed(id, false)
     };
+    match result {
+        Ok(()) => (200, workspaces.list()),
+        Err(error) => (500, json!({"error": error.to_string()})),
+    }
+}
+
+/// Only archived, inactive workflows can be permanently deleted. Holding the
+/// selection lock prevents a concurrent restore; the operation lock fences stale
+/// chat/deploy requests that already obtained a cached context.
+fn delete_archived_chat(workspaces: &Arc<Workspaces>, id: &str) -> (u16, Value) {
+    let _selection = workspaces.selection.lock().expect("selection poisoned");
+    {
+        let history = workspaces.history.lock().expect("history poisoned");
+        if !history.conversations.iter().any(|chat| chat.id == id) {
+            return (404, json!({"error": "unknown chat"}));
+        }
+        if !history.is_removed(id) {
+            return (
+                409,
+                json!({"error": "Archive this workflow before deleting it."}),
+            );
+        }
+    }
+    let context = workspaces
+        .contexts
+        .lock()
+        .expect("workspaces poisoned")
+        .get(id)
+        .cloned();
+    let _operation = context.as_ref().map(|context| {
+        context
+            .chat_operation
+            .lock()
+            .expect("chat operation poisoned")
+    });
+    if let Some(context) = &context {
+        if context.chat.lock().expect("chat poisoned").busy
+            || context
+                .runs
+                .lock()
+                .expect("runs poisoned")
+                .values()
+                .any(|run| run.status.holds_team())
+        {
+            return (
+                409,
+                json!({"error": "Finish or stop active work before deleting this workflow."}),
+            );
+        }
+    }
+    let result = workspaces
+        .history
+        .lock()
+        .expect("history poisoned")
+        .delete_archived(id);
     match result {
         Ok(()) => (200, workspaces.list()),
         Err(error) => (500, json!({"error": error.to_string()})),
@@ -4480,6 +4563,100 @@ mod tests {
             !request(server.address(), "GET", "/v1/chat", None).contains("This belongs elsewhere")
         );
         assert_eq!(server.context.runs.lock().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn deletion_requires_archiving_and_confirmation_and_blocks_late_writes() {
+        let server = test_server();
+        let id = server.context.conversation_id.clone();
+        server
+            .context
+            .publish_with_selection(
+                ChatRole::Operator,
+                "Delete only this test".into(),
+                false,
+                None,
+                vec![],
+            )
+            .unwrap();
+        let delete = format!("/v1/chats/{id}/delete");
+        assert!(request(
+            server.address(),
+            "POST",
+            &delete,
+            Some(r#"{"confirm":true}"#)
+        )
+        .contains(" 409 "));
+        assert!(request(
+            server.address(),
+            "POST",
+            &format!("/v1/chats/{id}/archive"),
+            Some("{}")
+        )
+        .contains(" 200 "));
+        assert!(request(server.address(), "GET", "/v1/chats/archived", None)
+            .contains("Delete only this test"));
+        assert!(request(server.address(), "POST", &delete, Some("{}")).contains(" 400 "));
+        assert!(request(
+            server.address(),
+            "POST",
+            &delete,
+            Some(r#"{"confirm":false}"#)
+        )
+        .contains(" 400 "));
+        server.context.chat.lock().unwrap().busy = true;
+        assert!(request(
+            server.address(),
+            "POST",
+            &delete,
+            Some(r#"{"confirm":true}"#)
+        )
+        .contains(" 409 "));
+        server.context.chat.lock().unwrap().busy = false;
+        assert!(request(
+            server.address(),
+            "POST",
+            &delete,
+            Some(r#"{"confirm":true}"#)
+        )
+        .contains(" 200 "));
+        assert!(!request(server.address(), "GET", "/v1/chats/archived", None).contains(&id));
+        assert!(request(
+            server.address(),
+            "POST",
+            &format!("/v1/chats/{id}/restore"),
+            Some("{}")
+        )
+        .contains(" 404 "));
+        assert!(request(
+            server.address(),
+            "GET",
+            &format!("/chats/{id}/v1/chat"),
+            None
+        )
+        .contains(" 404 "));
+        assert!(server
+            .context
+            .publish_with_selection(
+                ChatRole::Assistant,
+                "Late result".into(),
+                false,
+                None,
+                vec![]
+            )
+            .is_err());
+        assert_eq!(start_run(&server.context, b"{}").0, 409);
+        assert_eq!(send_to_ea(&server.context, b"{}").0, 409);
+        assert!(server
+            .context
+            .history
+            .lock()
+            .unwrap()
+            .conversation(&id)
+            .messages
+            .is_empty());
+        // The hidden ID remains in the list for stale tabs to leave this chat.
+        assert!(request(server.address(), "GET", "/v1/chats", None).contains(&id));
     }
 
     #[test]

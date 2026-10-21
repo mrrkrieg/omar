@@ -363,13 +363,22 @@ export async function startFakeServe({
     }
     // Operator/EA conversation.
     if (request.method === "GET" && url.pathname === "/v1/chats") return json(response, 200, historyListing());
-    if (request.method === "GET" && url.pathname === "/v1/chats/removed") return json(response, 200, {conversations:[...chats.values()].filter(chat => chat.removed).map(chatSummary)});
-    if (request.method === "POST" && /^\/v1\/chats\/[^/]+\/(remove|restore)$/.test(url.pathname)) {
-      await readBody(request);
+    if (request.method === "GET" && ["/v1/chats/removed", "/v1/chats/archived"].includes(url.pathname)) return json(response, 200, {conversations:[...chats.values()].filter(chat => chat.removed && !chat.deleted).map(chatSummary)});
+    if (request.method === "POST" && /^\/v1\/chats\/[^/]+\/(remove|archive|restore|delete)$/.test(url.pathname)) {
+      const body = JSON.parse(await readBody(request));
       const target = chats.get(url.pathname.split("/")[3]);
-      if (!target) return json(response, 404, {error:"unknown chat"});
-      const removed = url.pathname.endsWith("/remove");
-      if (removed && (target.busy || ["starting","running","stopping","pausing","paused"].includes(target.run?.status))) return json(response, 409, {error:"Stop this workflow before removing it from history."});
+      if (!target || target.deleted) return json(response, 404, {error:"unknown chat"});
+      if (url.pathname.endsWith("/delete")) {
+        if (body.confirm !== true) return json(response, 400, {error:"Confirm permanent deletion."});
+        if (!target.removed) return json(response, 409, {error:"Archive this workflow before deleting it."});
+        target.deleted = true;
+        target.title = "";
+        target.messages = [];
+        target.workspace = {revision:0,name:null,draft:null};
+        return json(response, 200, historyListing());
+      }
+      const removed = !url.pathname.endsWith("/restore");
+      if (removed && (target.busy || ["starting","running","stopping","pausing","paused"].includes(target.run?.status))) return json(response, 409, {error:"Stop this workflow before archiving it."});
       target.removed = removed;
       if (!removed) target.updated_at = Date.now();
       if (activeChat.removed) {

@@ -563,16 +563,24 @@ export async function selectConversation(serveUrl: string, id?: string): Promise
   return response.json();
 }
 
-export async function fetchRemovedConversations(serveUrl: string, signal?: AbortSignal): Promise<ConversationSummary[]> {
-  const response = await fetch(`${normalizeRuntimeUrl(serveUrl)}/v1/chats/removed`, { signal });
+export async function fetchArchivedConversations(serveUrl: string, signal?: AbortSignal): Promise<ConversationSummary[]> {
+  const response = await fetch(`${normalizeRuntimeUrl(serveUrl)}/v1/chats/archived`, { signal });
   if (!response.ok) throw new Error(await readError(response));
   return (await response.json()).conversations;
 }
 
-export async function setConversationRemoved(serveUrl: string, id: string, removed: boolean): Promise<Awaited<ReturnType<typeof fetchConversations>>> {
-  const response = await fetch(`${normalizeRuntimeUrl(serveUrl)}/v1/chats/${encodeURIComponent(id)}/${removed ? "remove" : "restore"}`, {
+export async function setConversationArchived(serveUrl: string, id: string, archived: boolean): Promise<Awaited<ReturnType<typeof fetchConversations>>> {
+  const response = await fetch(`${normalizeRuntimeUrl(serveUrl)}/v1/chats/${encodeURIComponent(id)}/${archived ? "archive" : "restore"}`, {
     method: "POST", headers: { "content-type": "application/json" }, body: "{}",
   });
   if (!response.ok) throw new Error(await readError(response));
   return response.json();
+}
+
+/** Called only after the operator confirms the named archived workflow. */
+export async function deleteConversation(serveUrl: string, id: string): Promise<void> {
+  const response = await fetch(`${normalizeRuntimeUrl(serveUrl)}/v1/chats/${encodeURIComponent(id)}/delete`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ confirm: true }),
+  });
+  if (!response.ok) throw new Error(await readError(response));
 }

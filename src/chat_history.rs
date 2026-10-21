@@ -73,6 +73,8 @@ pub struct History {
     imported_histories: Vec<String>,
     #[serde(default)]
     removed_ids: Vec<String>,
+    #[serde(default)]
+    deleted_ids: Vec<String>,
 }
 
 fn now() -> u64 {
@@ -154,6 +156,7 @@ impl History {
                     path,
                     imported_histories: Vec::new(),
                     removed_ids: Vec::new(),
+                    deleted_ids: Vec::new(),
                 };
                 history.save()?;
                 Ok(history)
@@ -191,8 +194,13 @@ impl History {
                 )?;
             }
             for mut chat in old.conversations {
-                if !chat.has_saved_context() || next.conversations.iter().any(|c| c.id == chat.id) {
+                if (!chat.has_saved_context() && !old.deleted_ids.contains(&chat.id))
+                    || next.conversations.iter().any(|c| c.id == chat.id)
+                {
                     continue;
+                }
+                if old.deleted_ids.contains(&chat.id) {
+                    next.deleted_ids.push(chat.id.clone());
                 }
                 if old.removed_ids.contains(&chat.id) {
                     next.removed_ids.push(chat.id.clone());
@@ -263,6 +271,10 @@ impl History {
     }
 
     pub fn touch(&mut self, id: &str) -> Result<()> {
+        anyhow::ensure!(
+            !self.is_deleted(id),
+            "This workflow was permanently deleted."
+        );
         let mut next = self.clone();
         next.conversations
             .iter_mut()
@@ -285,9 +297,47 @@ impl History {
         self.removed_ids.iter().any(|removed| removed == id)
     }
 
+    pub fn is_deleted(&self, id: &str) -> bool {
+        self.deleted_ids.iter().any(|deleted| deleted == id)
+    }
+
+    pub fn hidden_ids(&self) -> Vec<String> {
+        self.removed_ids.clone()
+    }
+
+    /// Erase the saved conversation and configuration, retaining only a content-free
+    /// tombstone. Cached contexts can still safely resolve the ID, but cannot write
+    /// to it or resurrect it through legacy imports. Run files/backups are separate.
+    pub fn delete_archived(&mut self, id: &str) -> Result<()> {
+        anyhow::ensure!(
+            self.is_removed(id),
+            "Archive this workflow before deleting it."
+        );
+        if self.is_deleted(id) {
+            return Ok(());
+        }
+        let mut next = self.clone();
+        let chat = next
+            .conversations
+            .iter_mut()
+            .find(|chat| chat.id == id)
+            .context("unknown chat")?;
+        chat.title.clear();
+        chat.messages.clear();
+        chat.workspace = WorkflowState::default();
+        next.deleted_ids.push(id.to_string());
+        next.save()?;
+        *self = next;
+        Ok(())
+    }
+
     /// Hide a workflow without discarding its transcript, draft, EA, or runs.
     /// Persist the replacement selection in the same atomic write.
     pub fn set_removed(&mut self, id: &str, removed: bool) -> Result<()> {
+        anyhow::ensure!(
+            !self.is_deleted(id),
+            "This workflow was permanently deleted."
+        );
         anyhow::ensure!(
             self.conversations.iter().any(|chat| chat.id == id),
             "unknown chat"
@@ -327,7 +377,7 @@ impl History {
         let mut chats: Vec<_> = self
             .conversations
             .iter()
-            .filter(|chat| self.is_removed(&chat.id) == removed)
+            .filter(|chat| !self.is_deleted(&chat.id) && self.is_removed(&chat.id) == removed)
             .map(Conversation::summary)
             .collect();
         chats.sort_by(|a, b| {
@@ -341,6 +391,10 @@ impl History {
     /// Allocate an EA's chat without changing any client's selection.
     pub fn chat_for_ea(&mut self, ea_id: crate::ea::EaId) -> Result<String> {
         if let Some(chat) = self.conversations.iter().find(|c| c.ea_id == Some(ea_id)) {
+            anyhow::ensure!(
+                !self.is_deleted(&chat.id),
+                "This workflow was permanently deleted."
+            );
             return Ok(chat.id.clone());
         }
         let mut next = self.clone();
@@ -375,6 +429,10 @@ impl History {
     }
 
     pub fn assign_ea(&mut self, id: &str, ea_id: crate::ea::EaId) -> Result<()> {
+        anyhow::ensure!(
+            !self.is_deleted(id),
+            "This workflow was permanently deleted."
+        );
         let mut next = self.clone();
         next.conversations
             .iter_mut()
@@ -399,6 +457,10 @@ impl History {
     }
 
     pub fn append_to(&mut self, id: &str, mut message: ChatMessage) -> Result<ChatMessage> {
+        anyhow::ensure!(
+            !self.is_deleted(id),
+            "This workflow was permanently deleted."
+        );
         let mut next = self.clone();
         let chat = next
             .conversations
@@ -458,6 +520,77 @@ mod tests {
             design: None,
             selection: vec!["flow.planner".into()],
         }
+    }
+
+    #[test]
+    fn permanent_deletion_survives_restart_and_cannot_be_restored_or_reimported() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("current/chats.json");
+        let mut history = History::load(path.clone()).unwrap();
+        let id = history.active_id.clone();
+        history.append(message("Private campaign content")).unwrap();
+        history.assign_ea(&id, 7).unwrap();
+        history
+            .save_workspace(
+                &id,
+                WorkflowUpdate {
+                    revision: 0,
+                    name: Some("Private name".into()),
+                    draft: None,
+                    clear_draft: false,
+                },
+            )
+            .unwrap();
+        let legacy = dir.path().join("legacy.json");
+        fs::copy(&path, &legacy).unwrap();
+        assert!(history.delete_archived(&id).is_err());
+        history.set_removed(&id, true).unwrap();
+        let selected = history.active_id.clone();
+        history
+            .append(message("Keep this other conversation"))
+            .unwrap();
+        let other = serde_json::to_value(history.active()).unwrap();
+        history.delete_archived(&id).unwrap();
+        let mut restored = History::load(path.clone()).unwrap();
+        assert!(restored.is_deleted(&id));
+        assert!(restored.removed().is_empty());
+        assert_eq!(restored.active_id, selected);
+        assert_eq!(serde_json::to_value(restored.active()).unwrap(), other);
+        assert!(restored.set_removed(&id, false).is_err());
+        assert!(restored.select(Some(&id)).is_err());
+        assert!(restored.append_to(&id, message("Late reply")).is_err());
+        assert!(restored.chat_for_ea(7).is_err());
+        restored.import_histories(&[legacy]).unwrap();
+        assert!(restored.conversation(&id).messages.is_empty());
+        assert!(!fs::read_to_string(&path).unwrap().contains("Private"));
+        // Importing a newer history carries tombstones before old histories can
+        // reintroduce the same ID on a fresh installation.
+        let mut fresh = History::load(dir.path().join("fresh/chats.json")).unwrap();
+        fresh
+            .import_histories(&[path, dir.path().join("legacy.json")])
+            .unwrap();
+        assert!(fresh.is_deleted(&id));
+        assert!(fresh.conversation(&id).messages.is_empty());
+    }
+
+    #[test]
+    fn failed_permanent_deletion_preserves_archived_content() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("chats.json");
+        let mut history = History::load(path.clone()).unwrap();
+        let id = history.active_id.clone();
+        history.append(message("Keep on save error")).unwrap();
+        history.set_removed(&id, true).unwrap();
+        let original_path = history.path.clone();
+        history.path = dir.path().join("blocked/chats.json");
+        fs::write(dir.path().join("blocked"), "not a directory").unwrap();
+        assert!(history.delete_archived(&id).is_err());
+        assert!(!history.is_deleted(&id));
+        assert_eq!(
+            history.conversation(&id).messages[0].text,
+            "Keep on save error"
+        );
+        assert_eq!(History::load(original_path).unwrap().removed().len(), 1);
     }
 
     #[test]

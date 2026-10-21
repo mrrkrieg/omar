@@ -60,15 +60,25 @@ with tempfile.TemporaryDirectory(prefix='omar-workspace-restore-') as directory:
         assert history['active_id'] == chat_id and len(history['conversations']) == 2
         assert all(chat['run'] is None for chat in history['conversations'])
         assert len(json.loads(cli('ls', '--json'))) == 1
-        api(url + '/v1/chats/' + chat_id + '/remove', {})
+        api(url + '/v1/chats/' + chat_id + '/archive', {})
         assert chat_id not in [chat['id'] for chat in api(url + '/v1/chats')['conversations']]
         cli('down', '-s', 'saved')
         assert json.loads(cli('open', '--print-url'))['url'] == url
         assert chat_id not in [chat['id'] for chat in api(url + '/v1/chats')['conversations']]
-        assert chat_id in [chat['id'] for chat in api(url + '/v1/chats/removed')['conversations']]
+        assert chat_id in [chat['id'] for chat in api(url + '/v1/chats/archived')['conversations']]
         api(url + '/v1/chats/' + chat_id + '/restore', {})
         assert api(scoped + '/v1/workflow') == saved
-        print('PASS: saved work survives restart; removal stays removed and restores its draft; stale writes refused; no runs started')
+        api(url + '/v1/chats/' + chat_id + '/archive', {})
+        api(url + '/v1/chats/' + chat_id + '/delete', {}, expected=400)
+        api(url + '/v1/chats/' + chat_id + '/delete', {'confirm': True})
+        cli('down', '-s', 'saved')
+        assert json.loads(cli('open', '--print-url'))['url'] == url
+        assert not api(url + '/v1/chats/archived')['conversations']
+        assert chat_id not in [chat['id'] for chat in api(url + '/v1/chats')['conversations']]
+        api(url + '/v1/chats/' + chat_id + '/restore', {}, expected=404)
+        api(scoped + '/v1/workflow', expected=404)
+        assert api(url + '/chats/' + other['id'] + '/v1/workflow')['draft'] is None
+        print('PASS: saved work and Archive survive restart; confirmed deletion stays deleted; other workflows preserved; stale writes refused; no runs started')
     finally:
         if started:
             cli('down', '-s', 'saved')

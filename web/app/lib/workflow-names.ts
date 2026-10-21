@@ -34,3 +34,13 @@ export async function saveWorkflowName(base: string, id: string, name: string) {
   localStorage.setItem(key(base), JSON.stringify({ ...saved, [id]: { name: trimmed.slice(0, 120), updatedAt: Date.now() } }));
   window.dispatchEvent(new Event(CHANGE));
 }
+
+export function forgetWorkflowCache(base: string, id: string) {
+  try {
+    const saved = JSON.parse(localStorage.getItem(key(base)) ?? "{}");
+    delete saved[id];
+    localStorage.setItem(key(base), JSON.stringify(saved));
+    localStorage.removeItem(`omar:workflow-draft:${base.replace(/\/$/, "")}/chats/${encodeURIComponent(id)}`);
+  } catch { /* A disabled browser cache must not undo a successful server deletion. */ }
+  window.dispatchEvent(new Event(CHANGE));
+}

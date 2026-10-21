@@ -198,12 +198,19 @@ This restores data created in OMAR. Standalone provider app histories and separa
 explicitly named OMAR workspaces retain their own boundaries; changing an assistant
 does not silently merge unrelated conversations or start an existing campaign.
 
-### Removing workflows from history
+### Archiving and deleting workflows
 
-Select or hover a workflow to reveal its trash button (always visible on touch).
-Removing a workflow hides it from history without deleting its conversation,
-saved draft, files, or run records. Undo restores it immediately; the sidebar's
-Removed workflows view can restore it after a reload or runtime restart.
+Select or hover a workflow to reveal its archive button (always visible on touch).
+Archive hides it from the recent list while keeping its conversation, saved draft,
+files, and run records. Undo or the sidebar's Archive view restores it, including
+after a reload or runtime restart. The Archive icon has no persistent highlight.
 A running or paused workflow must be stopped, and a busy assistant must finish,
-before removal. Removing the selected workflow opens another saved workflow,
+before archiving. Archiving the selected workflow opens another saved workflow,
 or a blank one if none remain. Other tabs follow that change when they refresh.
+
+The trash action appears only inside Archive. Its confirmation names the workflow,
+focuses Cancel initially, and requires Delete permanently before erasing its saved
+messages, title, and configuration. Errors leave it available for retry. Generated
+files, run records, and existing backups are retained. A content-free ID/EA mapping
+prevents deleted workflows from returning through legacy imports or stale writes.
+Old `/remove` and `/removed` routes remain compatible aliases for archiving.
