@@ -545,6 +545,7 @@ export function subscribeToDiagram(
 export async function fetchConversations(serveUrl: string, signal?: AbortSignal): Promise<{
   active_id: string;
   conversations: ConversationSummary[];
+  removed_ids?: string[];
 }> {
   const response = await fetch(`${normalizeRuntimeUrl(serveUrl)}/v1/chats`, { signal });
   if (!response.ok) throw new Error(await readError(response));
@@ -557,6 +558,20 @@ export async function selectConversation(serveUrl: string, id?: string): Promise
     method: "POST",
     headers: { "content-type": "application/json" },
     body: "{}",
+  });
+  if (!response.ok) throw new Error(await readError(response));
+  return response.json();
+}
+
+export async function fetchRemovedConversations(serveUrl: string, signal?: AbortSignal): Promise<ConversationSummary[]> {
+  const response = await fetch(`${normalizeRuntimeUrl(serveUrl)}/v1/chats/removed`, { signal });
+  if (!response.ok) throw new Error(await readError(response));
+  return (await response.json()).conversations;
+}
+
+export async function setConversationRemoved(serveUrl: string, id: string, removed: boolean): Promise<Awaited<ReturnType<typeof fetchConversations>>> {
+  const response = await fetch(`${normalizeRuntimeUrl(serveUrl)}/v1/chats/${encodeURIComponent(id)}/${removed ? "remove" : "restore"}`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: "{}",
   });
   if (!response.ok) throw new Error(await readError(response));
   return response.json();

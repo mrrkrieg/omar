@@ -109,12 +109,12 @@ export function Studio({ serveUrl = "", designAgent }: StudioProps) {
   const [restoredUrl, setRestoredUrl] = useState<string | null>(null);
   const select = useCallback((conversation: ConversationSummary) => {
     setSelected(conversation.id);
-    try { localStorage.setItem(`omar-chat:${serveUrl}`, conversation.id); } catch { /* Server also remembers selection. */ }
+    try { sessionStorage.setItem(`omar-chat:${serveUrl}`, conversation.id); localStorage.setItem(`omar-chat:${serveUrl}`, conversation.id); } catch { /* Server also remembers selection. */ }
   }, [serveUrl]);
   useEffect(() => {
     if (!serveUrl) return;
     let saved: string | null = null;
-    try { saved = localStorage.getItem(`omar-chat:${serveUrl}`) || sessionStorage.getItem(`omar-chat:${serveUrl}`); } catch { /* Use server selection. */ }
+    try { saved = sessionStorage.getItem(`omar-chat:${serveUrl}`) || localStorage.getItem(`omar-chat:${serveUrl}`); } catch { /* Use server selection. */ }
     const abort = new AbortController();
     void fetchConversations(serveUrl, abort.signal).then((history) => {
       if (abort.signal.aborted) return;

@@ -71,6 +71,8 @@ pub struct History {
     path: PathBuf,
     #[serde(default)]
     imported_histories: Vec<String>,
+    #[serde(default)]
+    removed_ids: Vec<String>,
 }
 
 fn now() -> u64 {
@@ -151,6 +153,7 @@ impl History {
                     conversations: vec![chat],
                     path,
                     imported_histories: Vec::new(),
+                    removed_ids: Vec::new(),
                 };
                 history.save()?;
                 Ok(history)
@@ -191,6 +194,9 @@ impl History {
                 if !chat.has_saved_context() || next.conversations.iter().any(|c| c.id == chat.id) {
                     continue;
                 }
+                if old.removed_ids.contains(&chat.id) {
+                    next.removed_ids.push(chat.id.clone());
+                }
                 chat.ea_id = None;
                 next.conversations.push(chat);
             }
@@ -205,6 +211,10 @@ impl History {
     }
 
     pub fn save_workspace(&mut self, id: &str, update: WorkflowUpdate) -> Result<WorkflowState> {
+        anyhow::ensure!(
+            !self.is_removed(id),
+            "Restore this workflow before editing it."
+        );
         let mut next = self.clone();
         let chat = next
             .conversations
@@ -271,10 +281,53 @@ impl History {
             .expect("active chat exists")
     }
 
+    pub fn is_removed(&self, id: &str) -> bool {
+        self.removed_ids.iter().any(|removed| removed == id)
+    }
+
+    /// Hide a workflow without discarding its transcript, draft, EA, or runs.
+    /// Persist the replacement selection in the same atomic write.
+    pub fn set_removed(&mut self, id: &str, removed: bool) -> Result<()> {
+        anyhow::ensure!(
+            self.conversations.iter().any(|chat| chat.id == id),
+            "unknown chat"
+        );
+        let mut next = self.clone();
+        next.removed_ids.retain(|value| value != id);
+        if removed {
+            next.removed_ids.push(id.to_string());
+        } else {
+            next.conversations
+                .iter_mut()
+                .find(|chat| chat.id == id)
+                .unwrap()
+                .updated_at = now();
+        }
+        if next.is_removed(&next.active_id) {
+            if let Some(chat) = next.list().first() {
+                next.active_id = chat.id.clone();
+            } else {
+                let chat = Conversation::new();
+                next.active_id = chat.id.clone();
+                next.conversations.push(chat);
+            }
+        }
+        next.save()?;
+        *self = next;
+        Ok(())
+    }
+
+    pub fn removed(&self) -> Vec<ConversationSummary> {
+        self.list_with_removed(true)
+    }
     pub fn list(&self) -> Vec<ConversationSummary> {
+        self.list_with_removed(false)
+    }
+    fn list_with_removed(&self, removed: bool) -> Vec<ConversationSummary> {
         let mut chats: Vec<_> = self
             .conversations
             .iter()
+            .filter(|chat| self.is_removed(&chat.id) == removed)
             .map(Conversation::summary)
             .collect();
         chats.sort_by(|a, b| {
@@ -305,7 +358,7 @@ impl History {
         match id {
             Some(id) => {
                 anyhow::ensure!(
-                    next.conversations.iter().any(|chat| chat.id == id),
+                    next.conversations.iter().any(|chat| chat.id == id) && !next.is_removed(id),
                     "unknown chat"
                 );
                 next.active_id = id.into();
@@ -455,6 +508,37 @@ mod tests {
     }
 
     #[test]
+    fn removed_workflows_survive_restart_and_restore_all_saved_context() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("chats.json");
+        let mut history = History::load(path.clone()).unwrap();
+        let first = history.active_id.clone();
+        history.append(message("Keep this conversation")).unwrap();
+        history.active_id = first.clone();
+        history.conversations[0].workspace.name = Some("Saved workflow".into());
+        let original = serde_json::to_value(history.active()).unwrap();
+        history.set_removed(&first, true).unwrap();
+        assert_ne!(history.active_id, first);
+        assert_eq!(history.list().len(), 1);
+        assert_eq!(history.removed().len(), 1);
+        assert!(history.select(Some(&first)).is_err());
+        let mut restored = History::load(path).unwrap();
+        assert!(restored.is_removed(&first));
+        assert_eq!(
+            serde_json::to_value(restored.conversation(&first)).unwrap(),
+            original
+        );
+        restored.set_removed(&first, false).unwrap();
+        restored.select(Some(&first)).unwrap();
+        assert_eq!(restored.active().messages[0].text, "Keep this conversation");
+        assert_eq!(
+            restored.active().workspace.name.as_deref(),
+            Some("Saved workflow")
+        );
+        assert!(restored.removed().is_empty());
+    }
+
+    #[test]
     fn a_failed_save_does_not_publish_or_replace_history() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("chats.json");
@@ -465,6 +549,9 @@ mod tests {
         assert!(history.active().messages.is_empty());
         assert!(history.select(None).is_err());
         assert_eq!(history.list().len(), 1);
+        let active = history.active_id.clone();
+        assert!(history.set_removed(&active, true).is_err());
+        assert!(!history.is_removed(&active));
     }
 
     #[test]

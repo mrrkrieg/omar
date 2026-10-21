@@ -1234,6 +1234,23 @@ fn handle_client(mut stream: TcpStream, workspaces: Arc<Workspaces>) -> Result<(
         }
     };
 
+    // History removal is a local, recoverable mutation; apply the same origin
+    // checks as workspace editing before accepting a simple cross-site POST.
+    if method == "POST"
+        && path.starts_with("/v1/chats/")
+        && (path.ends_with("/remove") || path.ends_with("/restore"))
+    {
+        let local_hosts = [
+            context.address.to_string(),
+            format!("localhost:{}", context.address.port()),
+        ];
+        if !host.as_ref().is_some_and(|h| local_hosts.contains(h))
+            || (origin_header.is_some() && origin.is_none())
+        {
+            return write_json(&mut stream, 403, &json!({"error":"origin rejected"}), None);
+        }
+    }
+
     if path == "/v1/workflow" || path == "/v1/workspaces" || path.starts_with("/v1/workspaces/") {
         // Workspace reads expose host files; editor launch grants shell access.
         // Reject cross-site requests, including simple POSTs, rather than only
@@ -1430,6 +1447,21 @@ fn handle_client(mut stream: TcpStream, workspaces: Arc<Workspaces>) -> Result<(
             }
         }
         ("GET", "/v1/chats") => (200, workspaces.list()),
+        ("GET", "/v1/chats/removed") => (
+            200,
+            json!({"conversations": workspaces.history.lock().expect("history poisoned").removed()}),
+        ),
+        ("POST", rest)
+            if rest.starts_with("/v1/chats/")
+                && (rest.ends_with("/remove") || rest.ends_with("/restore")) =>
+        {
+            let action = rest.rsplit('/').next().unwrap();
+            let id = rest
+                .trim_start_matches("/v1/chats/")
+                .strip_suffix(&format!("/{action}"))
+                .unwrap();
+            remove_or_restore_chat(&workspaces, id, action == "remove")
+        }
         ("POST", "/v1/chats") => {
             let _ = read_body(content_length)?;
             select_chat(&workspaces, None)
@@ -1776,6 +1808,17 @@ fn switch_backend(context: &Arc<Context_>, body: &[u8]) -> (u16, Value) {
         .chat_operation
         .lock()
         .expect("chat operation poisoned");
+    if context
+        .history
+        .lock()
+        .expect("history poisoned")
+        .is_removed(&context.conversation_id)
+    {
+        return (
+            409,
+            json!({"error": "Restore this workflow before continuing."}),
+        );
+    }
     #[derive(Deserialize)]
     struct Request {
         backend: String,
@@ -1957,6 +2000,14 @@ impl Workspaces {
 
     fn get(&self, id: &str) -> Result<Arc<Context_>> {
         let mut contexts = self.contexts.lock().expect("workspaces poisoned");
+        anyhow::ensure!(
+            !self
+                .history
+                .lock()
+                .expect("history poisoned")
+                .is_removed(id),
+            "This workflow was removed. Restore it from Removed workflows."
+        );
         if let Some(context) = contexts.get(id) {
             return Ok(context.clone());
         }
@@ -2024,9 +2075,17 @@ impl Workspaces {
 
     fn list(&self) -> Value {
         let contexts = self.contexts.lock().expect("workspaces poisoned").clone();
-        let (active_id, mut conversations) = {
+        let (active_id, mut conversations, removed_ids) = {
             let history = self.history.lock().expect("history poisoned");
-            (history.active_id.clone(), history.list())
+            (
+                history.active_id.clone(),
+                history.list(),
+                history
+                    .removed()
+                    .iter()
+                    .map(|chat| chat.id.clone())
+                    .collect::<Vec<_>>(),
+            )
         };
         let stored = stored_runs(&self.root.omar_dir);
         for conversation in &mut conversations {
@@ -2045,7 +2104,7 @@ impl Workspaces {
                 .cmp(&a.updated_at)
                 .then_with(|| a.id.cmp(&b.id))
         });
-        json!({"active_id": active_id, "conversations": conversations})
+        json!({"active_id": active_id, "conversations": conversations, "removed_ids": removed_ids})
     }
 }
 
@@ -2084,12 +2143,73 @@ fn update_recency(summary: &mut ConversationSummary) {
     }
 }
 
+/// Selection and removal share a lock; removal and deployment share the chat
+/// operation lock. A stale tab cannot admit a run after its workflow is hidden.
+fn remove_or_restore_chat(workspaces: &Arc<Workspaces>, id: &str, removed: bool) -> (u16, Value) {
+    let _selection = workspaces.selection.lock().expect("selection poisoned");
+    if !workspaces
+        .history
+        .lock()
+        .expect("history poisoned")
+        .conversations
+        .iter()
+        .any(|chat| chat.id == id)
+    {
+        return (404, json!({"error": "unknown chat"}));
+    }
+    let result = if removed {
+        let context = match workspaces.get(id) {
+            Ok(context) => context,
+            Err(error) => return (404, json!({"error": error.to_string()})),
+        };
+        let _operation = context
+            .chat_operation
+            .lock()
+            .expect("chat operation poisoned");
+        if context.chat.lock().expect("chat poisoned").busy {
+            return (
+                409,
+                json!({"error": "Wait for the assistant to finish before removing this workflow."}),
+            );
+        }
+        if context
+            .runs
+            .lock()
+            .expect("runs poisoned")
+            .values()
+            .any(|run| run.status.holds_team())
+        {
+            return (
+                409,
+                json!({"error": "Stop this workflow before removing it from history."}),
+            );
+        }
+        workspaces
+            .history
+            .lock()
+            .expect("history poisoned")
+            .set_removed(id, true)
+    } else {
+        workspaces
+            .history
+            .lock()
+            .expect("history poisoned")
+            .set_removed(id, false)
+    };
+    match result {
+        Ok(()) => (200, workspaces.list()),
+        Err(error) => (500, json!({"error": error.to_string()})),
+    }
+}
+
 /// Selection remembers where to open next, without touching another EA.
 fn select_chat(workspaces: &Arc<Workspaces>, id: Option<&str>) -> (u16, Value) {
     let _selection = workspaces.selection.lock().expect("selection poisoned");
     let selected = {
         let mut history = workspaces.history.lock().expect("history poisoned");
-        if id.is_some_and(|id| !history.conversations.iter().any(|chat| chat.id == id)) {
+        if id.is_some_and(|id| {
+            history.is_removed(id) || !history.conversations.iter().any(|chat| chat.id == id)
+        }) {
             return (404, json!({"error": "unknown chat"}));
         }
         if let Err(error) = history.select(id) {
@@ -2116,6 +2236,17 @@ fn send_to_ea(context: &Arc<Context_>, body: &[u8]) -> (u16, Value) {
         .chat_operation
         .lock()
         .expect("chat operation poisoned");
+    if context
+        .history
+        .lock()
+        .expect("history poisoned")
+        .is_removed(&context.conversation_id)
+    {
+        return (
+            409,
+            json!({"error": "Restore this workflow before continuing."}),
+        );
+    }
     if context.shutdown.load(Ordering::SeqCst) {
         return (503, json!({"error": "runtime is shutting down"}));
     }
@@ -2432,6 +2563,17 @@ fn start_run(context: &Arc<Context_>, body: &[u8]) -> (u16, Value) {
         .chat_operation
         .lock()
         .expect("chat operation poisoned");
+    if context
+        .history
+        .lock()
+        .expect("history poisoned")
+        .is_removed(&context.conversation_id)
+    {
+        return (
+            409,
+            json!({"error": "Restore this workflow before continuing."}),
+        );
+    }
     let request: StartRunRequest = match serde_json::from_slice(body) {
         Ok(request) => request,
         Err(error) => return (400, json!({"error": format!("invalid request: {error}")})),
@@ -3305,6 +3447,17 @@ fn resume_run(context: &Arc<Context_>, id: &str) -> (u16, Value) {
         .chat_operation
         .lock()
         .expect("chat operation poisoned");
+    if context
+        .history
+        .lock()
+        .expect("history poisoned")
+        .is_removed(&context.conversation_id)
+    {
+        return (
+            409,
+            json!({"error": "Restore this workflow before continuing."}),
+        );
+    }
     let team = {
         let runs = context.runs.lock().expect("serve runs poisoned");
         match runs.get(id) {
@@ -4327,6 +4480,83 @@ mod tests {
             !request(server.address(), "GET", "/v1/chat", None).contains("This belongs elsewhere")
         );
         assert_eq!(server.context.runs.lock().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn removing_chat_preserves_history_blocks_active_work_and_can_be_undone() {
+        let server = test_server();
+        let id = server.context.conversation_id.clone();
+        server
+            .context
+            .publish_with_selection(
+                ChatRole::Operator,
+                "Keep this workflow".into(),
+                false,
+                None,
+                vec![],
+            )
+            .unwrap();
+        let path = format!("/v1/chats/{id}/remove");
+        server.context.chat.lock().unwrap().busy = true;
+        assert!(request(server.address(), "POST", &path, Some("{}")).contains(" 409 "));
+        server.context.chat.lock().unwrap().busy = false;
+        for status in [
+            RunStatus::Starting,
+            RunStatus::Running,
+            RunStatus::Paused,
+            RunStatus::Stopping,
+        ] {
+            server
+                .context
+                .runs
+                .lock()
+                .unwrap()
+                .insert("test".into(), record("Team", status));
+            assert!(request(server.address(), "POST", &path, Some("{}")).contains(" 409 "));
+        }
+        server.context.runs.lock().unwrap().clear();
+        assert!(request(server.address(), "POST", &path, Some("{}")).contains(" 200 "));
+        let listing = request(server.address(), "GET", "/v1/chats", None);
+        let listing: Value =
+            serde_json::from_str(listing.split("\r\n\r\n").nth(1).unwrap()).unwrap();
+        assert!(listing["conversations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|chat| chat["id"] != id));
+        assert!(request(server.address(), "GET", "/v1/chats/removed", None)
+            .contains("Keep this workflow"));
+        assert!(request(
+            server.address(),
+            "GET",
+            &format!("/chats/{id}/v1/chat"),
+            None
+        )
+        .contains(" 404 "));
+        assert!(request(
+            server.address(),
+            "POST",
+            &format!("/v1/chats/{id}/activate"),
+            Some("{}")
+        )
+        .contains(" 404 "));
+        // A cached Context from a request admitted before removal must not run.
+        assert_eq!(start_run(&server.context, b"{}").0, 409);
+        assert_eq!(send_to_ea(&server.context, b"{}").0, 409);
+        assert!(request(
+            server.address(),
+            "POST",
+            &format!("/v1/chats/{id}/restore"),
+            Some("{}")
+        )
+        .contains(" 200 "));
+        assert!(request(
+            server.address(),
+            "GET",
+            &format!("/chats/{id}/v1/chat"),
+            None
+        )
+        .contains("Keep this workflow"));
     }
 
     #[test]

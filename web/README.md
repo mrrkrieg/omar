@@ -197,3 +197,13 @@ needed merely to open and view saved work.
 This restores data created in OMAR. Standalone provider app histories and separate
 explicitly named OMAR workspaces retain their own boundaries; changing an assistant
 does not silently merge unrelated conversations or start an existing campaign.
+
+### Removing workflows from history
+
+Select or hover a workflow to reveal its trash button (always visible on touch).
+Removing a workflow hides it from history without deleting its conversation,
+saved draft, files, or run records. Undo restores it immediately; the sidebar's
+Removed workflows view can restore it after a reload or runtime restart.
+A running or paused workflow must be stopped, and a busy assistant must finish,
+before removal. Removing the selected workflow opens another saved workflow,
+or a blank one if none remain. Other tabs follow that change when they refresh.

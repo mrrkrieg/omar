@@ -60,7 +60,15 @@ with tempfile.TemporaryDirectory(prefix='omar-workspace-restore-') as directory:
         assert history['active_id'] == chat_id and len(history['conversations']) == 2
         assert all(chat['run'] is None for chat in history['conversations'])
         assert len(json.loads(cli('ls', '--json'))) == 1
-        print('PASS: same workspace, selection, draft, files and inputs survive restart; stale writes refused; no runs started')
+        api(url + '/v1/chats/' + chat_id + '/remove', {})
+        assert chat_id not in [chat['id'] for chat in api(url + '/v1/chats')['conversations']]
+        cli('down', '-s', 'saved')
+        assert json.loads(cli('open', '--print-url'))['url'] == url
+        assert chat_id not in [chat['id'] for chat in api(url + '/v1/chats')['conversations']]
+        assert chat_id in [chat['id'] for chat in api(url + '/v1/chats/removed')['conversations']]
+        api(url + '/v1/chats/' + chat_id + '/restore', {})
+        assert api(scoped + '/v1/workflow') == saved
+        print('PASS: saved work survives restart; removal stays removed and restores its draft; stale writes refused; no runs started')
     finally:
         if started:
             cli('down', '-s', 'saved')

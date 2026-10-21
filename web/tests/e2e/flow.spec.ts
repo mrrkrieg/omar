@@ -2767,3 +2767,50 @@ test("workflow source and filename restore after reload without changing the tra
   const after = await (await page.request.get(`${fake.url}/v1/chat`)).json();
   expect(after.messages).toEqual(before.messages);
 });
+
+
+test("workflows can be removed, undone, and restored after reload with their saved drafts", async ({ page, context }) => {
+  await useFakeServe(page);
+  await draftUntilProposed(page);
+  const original = await (await page.request.get(`${fake.url}/v1/chat`)).json();
+  const second = await context.newPage();
+  try {
+    await useFakeServe(second);
+    await expect(second.locator(".messages")).toContainText("Review the release plan");
+    const history = page.getByRole("complementary", {name:"Chat history"});
+    await history.locator(".workflow-row").filter({hasText:"Review the release plan"}).getByRole("button", {name:"Remove workflow",exact:true}).click();
+    await expect(history.getByRole("list", {name:"Saved chats"})).not.toContainText("Review the release plan");
+    await expect(history.getByRole("status")).toContainText("Workflow removed");
+    await expect(second.locator(".messages")).not.toContainText("Review the release plan");
+    await history.getByRole("button", {name:"Undo",exact:true}).click();
+    await expect(history.getByRole("list", {name:"Saved chats"})).toContainText("Review the release plan");
+    await history.locator(".workflow-row").filter({hasText:"Review the release plan"}).getByRole("button", {name:"Remove workflow",exact:true}).click();
+    await page.reload();
+    await history.getByRole("button", {name:"Removed workflows",exact:true}).click();
+    await expect(history.getByRole("list", {name:"Removed workflows"})).toContainText("Review the release plan");
+    await history.getByRole("button", {name:"Restore workflow",exact:true}).click();
+    await history.getByRole("button", {name:"Back to workflows",exact:true}).click();
+    await history.getByRole("button", {name:/Review the release plan/}).click();
+    await expect(page.locator(".messages")).toContainText("Review the release plan");
+    await expect(page.locator(".diagram-panel")).toBeVisible();
+    const restored = await (await page.request.get(`${fake.url}/v1/chat`)).json();
+    expect(restored.id).toBe(original.id);
+    expect(restored.messages).toEqual(original.messages);
+  } finally { await second.close(); }
+});
+
+test("workflow removal failures keep the row and running workflows cannot be removed", async ({page}) => {
+  await fake.close();
+  fake = (await startFakeServe({stepMs:120,port:FAKE_SERVE_PORT,snapshot:"diagram-web.v1.json"})) as FakeServe;
+  await useFakeServe(page);
+  await draftUntilProposed(page);
+  const history = page.getByRole("complementary", {name:"Chat history"});
+  await page.route("**/v1/chats/*/remove", route => route.fulfill({status:409,json:{error:"Stop this workflow before removing it from history."}}));
+  await history.getByRole("button", {name:"Remove workflow",exact:true}).click();
+  await expect(history.getByRole("alert")).toContainText("Stop this workflow");
+  await expect(history.getByRole("list", {name:"Saved chats"})).toContainText("Review the release plan");
+  await page.unroute("**/v1/chats/*/remove");
+  await page.getByRole("button", {name:"Deploy",exact:true}).click();
+  await page.getByRole("button", {name:"Confirm deploy",exact:true}).click();
+  await expect(history.getByRole("button", {name:"Remove workflow",exact:true})).toBeDisabled();
+});
