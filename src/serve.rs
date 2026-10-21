@@ -99,6 +99,9 @@ pub struct RunRecord {
     pub status: RunStatus,
     pub diagram_address: Option<String>,
     pub started_at: u64,
+    /// Last meaningful run activity, in milliseconds like chat timestamps.
+    #[serde(default)]
+    pub activity_at: u64,
     pub finished_at: Option<u64>,
     pub error: Option<String>,
     /// Input ports the run was admitted with, so its timeline can be
@@ -652,7 +655,24 @@ impl Serve {
         let agent_token = Uuid::new_v4().to_string();
         let mut history =
             History::load(crate::ea::ea_state_dir(ea_id, omar_dir).join("chats.json"))?;
-        let has_history = !history.active().messages.is_empty();
+        let mut legacy = Vec::new();
+        let mut roots = vec![omar_dir.join("ea")];
+        if crate::sessions::is_managed() {
+            roots.push(crate::sessions::home_root().join("ea"));
+        }
+        for root in roots {
+            if let Ok(entries) = fs::read_dir(root) {
+                legacy.extend(
+                    entries
+                        .flatten()
+                        .map(|e| e.path().join("chats.json"))
+                        .filter(|p| p.exists()),
+                );
+            }
+        }
+        legacy.sort();
+        history.import_histories(&legacy)?;
+        let has_history = history.active().has_saved_context();
         let conversation_id = history.active_id.clone();
         let workspace_ea = match history.active().ea_id {
             Some(id) => id,
@@ -678,7 +698,7 @@ impl Serve {
         let parked = paused_runs(omar_dir, workspace_ea);
         let latest_parked = parked
             .values()
-            .max_by_key(|run| run.started_at)
+            .max_by_key(|run| (run.status.holds_team(), run.started_at))
             .map(|run| run.run_id.clone());
         let context = Arc::new(Context_ {
             history: history.clone(),
@@ -1214,7 +1234,7 @@ fn handle_client(mut stream: TcpStream, workspaces: Arc<Workspaces>) -> Result<(
         }
     };
 
-    if path == "/v1/workspaces" || path.starts_with("/v1/workspaces/") {
+    if path == "/v1/workflow" || path == "/v1/workspaces" || path.starts_with("/v1/workspaces/") {
         // Workspace reads expose host files; editor launch grants shell access.
         // Reject cross-site requests, including simple POSTs, rather than only
         // withholding CORS headers after executing the operation.
@@ -1229,6 +1249,38 @@ fn handle_client(mut stream: TcpStream, workspaces: Arc<Workspaces>) -> Result<(
         }
         if method == "OPTIONS" {
             return write_json(&mut stream, 204, &Value::Null, origin);
+        }
+        if path == "/v1/workflow" {
+            let _operation = (method == "POST").then(|| {
+                context
+                    .chat_operation
+                    .lock()
+                    .expect("chat operation poisoned")
+            });
+            let mut history = context.history.lock().expect("history poisoned");
+            let (status, body) = match method.as_str() {
+                "GET" => (
+                    200,
+                    json!(history.conversation(&context.conversation_id).workspace),
+                ),
+                "POST" => {
+                    match serde_json::from_slice::<crate::chat_history::WorkflowUpdate>(&raw_body) {
+                        Ok(update) => {
+                            match history.save_workspace(&context.conversation_id, update) {
+                                Ok(saved) => (200, json!(saved)),
+                                Err(error) => (409, json!({"error": error.to_string()})),
+                            }
+                        }
+                        Err(error) => (400, json!({"error": error.to_string()})),
+                    }
+                }
+                _ => (405, json!({"error": "method not allowed"})),
+            };
+            drop(history);
+            if method == "POST" && status == 200 {
+                context.chat.lock().expect("chat poisoned").needs_context = true;
+            }
+            return write_json(&mut stream, status, &body, origin);
         }
         let response = workspace_request(&workspaces, &context, &method, &path, &raw_body);
         let (status, body) = match response {
@@ -1914,7 +1966,7 @@ impl Workspaces {
             .iter()
             .find(|chat| chat.id == id)
             .context("unknown chat")?;
-        let has_history = !saved.messages.is_empty();
+        let has_history = saved.has_saved_context();
         let ea_id = match saved.ea_id {
             Some(ea_id) => ea_id,
             None => {
@@ -1936,7 +1988,7 @@ impl Workspaces {
         }
         let latest_parked = parked
             .values()
-            .max_by_key(|run| run.started_at)
+            .max_by_key(|run| (run.status.holds_team(), run.started_at))
             .map(|run| run.run_id.clone());
         let context = Arc::new(Context_ {
             history: self.history.clone(),
@@ -1976,11 +2028,23 @@ impl Workspaces {
             let history = self.history.lock().expect("history poisoned");
             (history.active_id.clone(), history.list())
         };
+        let stored = stored_runs(&self.root.omar_dir);
         for conversation in &mut conversations {
+            conversation.run = stored
+                .iter()
+                .filter(|v| v["ea_id"].as_u64() == conversation.ea_id.map(|id| id as u64))
+                .filter_map(|v| serde_json::from_value::<RunRecord>(v.clone()).ok())
+                .max_by_key(|r| r.activity_at.max(r.started_at * 1000));
             if let Some(context) = contexts.get(&conversation.id) {
                 context.live_summary(conversation);
             }
+            update_recency(conversation);
         }
+        conversations.sort_by(|a, b| {
+            b.updated_at
+                .cmp(&a.updated_at)
+                .then_with(|| a.id.cmp(&b.id))
+        });
         json!({"active_id": active_id, "conversations": conversations})
     }
 }
@@ -2000,6 +2064,23 @@ impl Context_ {
                     .max_by_key(|run| (run.status.is_active(), run.started_at))
                     .cloned()
             });
+        update_recency(summary);
+    }
+}
+
+fn activity_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+fn update_recency(summary: &mut ConversationSummary) {
+    if let Some(run) = &summary.run {
+        summary.updated_at = summary
+            .updated_at
+            .max(run.activity_at)
+            .max(run.started_at * 1000)
+            .max(run.finished_at.unwrap_or(0) * 1000);
     }
 }
 
@@ -2438,6 +2519,7 @@ fn start_run(context: &Arc<Context_>, body: &[u8]) -> (u16, Value) {
         status: RunStatus::Starting,
         diagram_address: None,
         started_at: now_unix(),
+        activity_at: activity_now(),
         finished_at: None,
         error: None,
         // From the combined list: a CLI start names its inputs in `raw_inputs`.
@@ -2474,6 +2556,8 @@ fn start_run(context: &Arc<Context_>, body: &[u8]) -> (u16, Value) {
                 record.diagram_address = Some(diagram_address.to_string());
                 if record.status == RunStatus::Starting {
                     record.status = RunStatus::Running;
+                    record.activity_at = activity_now();
+                    persist_run(context, record);
                 }
                 return (201, json!(record));
             }
@@ -2774,14 +2858,24 @@ fn panel_answer(context: &Arc<Context_>, run_id: &str, body: &[u8]) -> (u16, Val
         &answer.task_id,
         &answer.values,
     ) {
-        Ok(()) => (
-            202,
-            json!({
-                "run_id": run_id,
-                "task_id": answer.task_id,
-                "sent": answer.values.keys().collect::<Vec<_>>()
-            }),
-        ),
+        Ok(()) => {
+            if let Err(error) = context
+                .history
+                .lock()
+                .expect("history poisoned")
+                .touch(&context.conversation_id)
+            {
+                eprintln!("Response accepted, but activity time could not be saved: {error:#}");
+            }
+            (
+                202,
+                json!({
+                    "run_id": run_id,
+                    "task_id": answer.task_id,
+                    "sent": answer.values.keys().collect::<Vec<_>>()
+                }),
+            )
+        }
         // The runtime's own refusal — a port outside the invocation's effects,
         // a value of the wrong type, a contract left unsatisfied — reported as
         // the caller's error rather than the daemon's.
@@ -2923,6 +3017,7 @@ fn stop_run(context: &Arc<Context_>, id: &str) -> (u16, Value) {
             // team; its checkpoints stay on disk for inspection.
             Some(record) if record.status == RunStatus::Paused => {
                 record.status = RunStatus::Stopped;
+                record.activity_at = activity_now();
                 record.finished_at = Some(now_unix());
                 persist_run(context, record);
                 return (200, json!(record));
@@ -2949,6 +3044,8 @@ fn stop_run(context: &Arc<Context_>, id: &str) -> (u16, Value) {
         // written, and a finished status must not be walked back to stopping.
         Some(record) if record.status.is_active() => {
             record.status = RunStatus::Stopping;
+            record.activity_at = activity_now();
+            persist_run(context, record);
             (202, json!(record))
         }
         Some(record) => (200, json!(record)),
@@ -2975,6 +3072,7 @@ fn pause_run(context: &Arc<Context_>, id: &str) -> (u16, Value) {
     match runs.get_mut(id) {
         Some(record) if record.status.is_active() => {
             record.status = RunStatus::Pausing;
+            record.activity_at = activity_now();
             persist_run(context, record);
             (202, json!(record))
         }
@@ -3238,6 +3336,7 @@ fn resume_run(context: &Arc<Context_>, id: &str) -> (u16, Value) {
             return (404, json!({"error": "unknown run"}));
         };
         record.status = RunStatus::Starting;
+        record.activity_at = activity_now();
         record.diagram_address = None;
         record.finished_at = None;
         record.error = None;
@@ -3253,6 +3352,8 @@ fn resume_run(context: &Arc<Context_>, id: &str) -> (u16, Value) {
                 record.diagram_address = Some(diagram_address.to_string());
                 if record.status == RunStatus::Starting {
                     record.status = RunStatus::Running;
+                    record.activity_at = activity_now();
+                    persist_run(context, record);
                 }
                 return (200, json!(record));
             }
@@ -3415,6 +3516,7 @@ fn paused_runs(omar_dir: &Path, ea_id: EaId) -> BTreeMap<String, RunRecord> {
                         .join("run.json");
                     let _ = topology::write_json_atomic(&path, &record);
                 }
+                RunStatus::Failed | RunStatus::Completed => {}
                 _ => return None,
             }
             Some((record.run_id.clone(), record))
@@ -3470,6 +3572,7 @@ fn finish_run(context: &Arc<Context_>, run_id: &str, outcome: Result<topology::R
         .remove(run_id);
     let mut runs = context.runs.lock().expect("serve runs poisoned");
     if let Some(record) = runs.get_mut(run_id) {
+        record.activity_at = activity_now();
         record.finished_at = Some(now_unix());
         match outcome {
             Ok(outcome) => {
@@ -3905,6 +4008,7 @@ mod tests {
             status,
             diagram_address: None,
             started_at: 0,
+            activity_at: 0,
             finished_at: None,
             error: None,
             present: Vec::new(),
@@ -4294,6 +4398,43 @@ mod tests {
     }
 
     #[test]
+    fn every_assistant_backend_reopens_the_same_saved_conversation() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = Config::default();
+        let mut history =
+            History::load(crate::ea::ea_state_dir(0, dir.path()).join("chats.json")).unwrap();
+        let id = history.active_id.clone();
+        history
+            .append(ChatMessage {
+                sequence: 0,
+                role: ChatRole::Operator,
+                text: "Keep this across harnesses".into(),
+                progress: false,
+                design: None,
+                selection: vec![],
+            })
+            .unwrap();
+        for kind in crate::backend::ASSISTANT {
+            config.agent.default_command = crate::backend::of(kind).default_command().into();
+            let server =
+                Serve::start("127.0.0.1:0".parse().unwrap(), &config, dir.path(), 0).unwrap();
+            assert_eq!(server.context.conversation_id, id);
+            assert!(server.context.chat.lock().unwrap().needs_context);
+            let response = request(server.address(), "GET", "/v1/chat", None);
+            assert!(
+                response.contains("Keep this across harnesses"),
+                "{}: {response}",
+                kind.name()
+            );
+            let response = request(server.address(), "GET", "/v1/agent", None);
+            assert!(
+                response.contains(&format!("\"backend\":\"{}\"", kind.name())),
+                "{response}"
+            );
+        }
+    }
+
+    #[test]
     fn reopening_saved_chats_keeps_their_ea_assignments() {
         let dir = tempfile::tempdir().unwrap();
         let config = Config::default();
@@ -4327,6 +4468,7 @@ mod tests {
                     status: RunStatus::Running,
                     diagram_address: None,
                     started_at: 1,
+                    activity_at: 0,
                     finished_at: None,
                     error: None,
                     present: Vec::new(),
@@ -4626,6 +4768,7 @@ while True:
                     status: RunStatus::Running,
                     diagram_address: None,
                     started_at: 0,
+                    activity_at: 0,
                     finished_at: None,
                     error: None,
                     present: Vec::new(),
@@ -4695,6 +4838,7 @@ while True:
                     status: RunStatus::Running,
                     diagram_address: None,
                     started_at: 0,
+                    activity_at: 0,
                     finished_at: None,
                     error: None,
                     present: Vec::new(),
@@ -4846,6 +4990,7 @@ while True:
                     status: RunStatus::Running,
                     diagram_address: None,
                     started_at: 0,
+                    activity_at: 0,
                     finished_at: None,
                     error: None,
                     present: Vec::new(),
@@ -4982,6 +5127,7 @@ while True:
                     status: RunStatus::Running,
                     diagram_address: None,
                     started_at: 0,
+                    activity_at: 0,
                     finished_at: None,
                     error: None,
                     present: Vec::new(),
@@ -5027,6 +5173,7 @@ while True:
                     status: RunStatus::Paused,
                     diagram_address: None,
                     started_at: 0,
+                    activity_at: 0,
                     finished_at: None,
                     error: None,
                     present: Vec::new(),
@@ -5638,5 +5785,22 @@ while True:
         let mut response = String::new();
         stream.read_to_string(&mut response).expect("response");
         response
+    }
+    #[test]
+    fn recent_activity_includes_run_and_resume_times_without_polling_changes() {
+        let server = test_server();
+        let mut summary = server.context.history.lock().unwrap().active().summary();
+        summary.updated_at = 10;
+        let mut run = record("Sample", RunStatus::Running);
+        run.started_at = 20;
+        run.activity_at = 30_000;
+        summary.run = Some(run);
+        update_recency(&mut summary);
+        assert_eq!(summary.updated_at, 30_000);
+        update_recency(&mut summary);
+        assert_eq!(summary.updated_at, 30_000);
+        summary.run.as_mut().unwrap().activity_at = 40_000;
+        update_recency(&mut summary);
+        assert_eq!(summary.updated_at, 40_000);
     }
 }

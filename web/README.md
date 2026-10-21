@@ -167,3 +167,33 @@ requirements against it, so a runtime field rename fails here rather than
 silently. `tests/fake-serve.mjs` replays that snapshot over the real wire
 protocol, which is how the browser test runs without a model, a Lean toolchain,
 or tmux.
+
+### Saved work
+
+`omar open` (or `omar up --web` without a name) reopens the remembered workspace,
+starting the same runtime if it stopped. Use
+`omar up --name NAME` to explicitly create a separate workspace. The current
+conversation, source, companion files, inputs, and display names persist locally.
+A workflow editor shows **Saving…** until its draft is durable. Conflicting edits
+from another tab are rejected; the unsaved version stays in the browser for recovery.
+Legacy EA histories are backed up and imported once by chat ID without rewriting
+original transcripts. Reopening a workspace never starts a campaign.
+
+### Harness-independent saved work
+
+OMAR stores Mission Control transcripts, workflow drafts, companion files, inputs,
+and display names in the selected workspace under `OMAR_HOME` (default `~/.omar`).
+This location does not depend on Claude Code, Codex, Cursor, OpenCode, Pi, or
+Antigravity. Switching the assistant or restarting supplies both the saved transcript
+and current workflow edits to the selected backend. Imported draft-only workflows
+are preserved even when they have no chat messages.
+
+`Open OMAR.command` uses an installed OMAR executable, an explicit `OMAR_BIN`, or
+an adjacent source build. It contains no username, assistant directory, or worktree
+path. Install `omar` and `omarc` together so the compiler is found beside the runtime.
+The locally installed copy can live in `~/.omar/bin`; no assistant installation is
+needed merely to open and view saved work.
+
+This restores data created in OMAR. Standalone provider app histories and separate
+explicitly named OMAR workspaces retain their own boundaries; changing an assistant
+does not silently merge unrelated conversations or start an existing campaign.

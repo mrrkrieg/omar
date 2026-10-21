@@ -2748,3 +2748,22 @@ test("workflow tabs support keyboard navigation and saved VS Code edits reach de
   await deploy(page);
   expect((await deployment).postDataJSON().files).toEqual(savedFiles);
 });
+
+test("workflow source and filename restore after reload without changing the transcript", async ({ page }) => {
+  await useFakeServe(page);
+  await draftUntilProposed(page);
+  const before = await (await page.request.get(`${fake.url}/v1/chat`)).json();
+  await page.getByRole("button", {name:"Show the source pane"}).click();
+  const source = page.getByRole("textbox", {name:"OMAR program"});
+  const edited = (await source.inputValue()) + "\n// saved edit\n";
+  await source.fill(edited);
+  await page.getByRole("textbox", {name:"Program file name"}).fill("edited.omar");
+  await expect(page.locator(".workflow-save")).toHaveText("Saved");
+  await page.reload();
+  await expect(page.locator(".diagram-panel")).toBeVisible();
+  await page.getByRole("button", {name:"Show the source pane"}).click();
+  await expect(source).toHaveValue(edited);
+  await expect(page.getByRole("textbox", {name:"Program file name"})).toHaveValue("edited.omar");
+  const after = await (await page.request.get(`${fake.url}/v1/chat`)).json();
+  expect(after.messages).toEqual(before.messages);
+});

@@ -345,6 +345,22 @@ export async function startFakeServe({
         return json(response, 202, { status: "delivered" });
       });
     }
+    if (url.pathname === "/v1/workflow") {
+      if (request.method === "GET") return json(response, 200, chat.workspace);
+      if (request.method === "POST") {
+        const update = await readBody(request);
+        const edits = update.draft != null || update.clear_draft === true;
+        if (edits && update.revision !== chat.workspace.revision) return json(response, 409, { error: "This workflow changed in another tab. Reload before saving; your local edits have been kept." });
+        const sequence = chat.messages.filter(message => message.design).at(-1)?.sequence ?? 0;
+        if (update.draft && update.draft.proposal_sequence !== sequence) return json(response, 409, { error: "A newer proposal is available. Reload before saving your edits." });
+        if (update.name != null) chat.workspace.name = update.name.trim();
+        if (update.draft != null) chat.workspace.draft = update.draft;
+        if (update.clear_draft) chat.workspace.draft = null;
+        if (edits) chat.workspace.revision++;
+        chat.updated_at = Date.now();
+        return json(response, 200, chat.workspace);
+      }
+    }
     // Operator/EA conversation.
     if (request.method === "GET" && url.pathname === "/v1/chats") {
       return json(response, 200, { active_id: activeChat.id, conversations: [...chats.values()].map(chatSummary).sort((a, b) => b.updated_at - a.updated_at) });
@@ -427,12 +443,12 @@ export async function startFakeServe({
 
   let backend = "codex";
   function newChat() {
-    return { id: randomUUID(), title: "New chat", created_at: Date.now(), updated_at: Date.now(), messages: [], subscribers: new Set(), sequence: 0, busy: false, runs: new Map() };
+    return { id: randomUUID(), title: "New chat", created_at: Date.now(), updated_at: Date.now(), messages: [], subscribers: new Set(), sequence: 0, busy: false, runs: new Map(), workspace: { revision: 0, name: null, draft: null } };
   }
   let activeChat = newChat();
   const chats = new Map([[activeChat.id, activeChat]]);
   function chatSummary(value = activeChat) {
-    return { id: value.id, title: value.title, created_at: value.created_at, updated_at: value.updated_at, message_count: value.messages.length, ea_id: [...chats.keys()].indexOf(value.id), busy: value.busy, run: value.run ?? null };
+    return { id: value.id, title: value.title, created_at: value.created_at, updated_at: Math.max(value.updated_at, (value.run?.started_at ?? 0) * 1000, value.run?.activity_at ?? 0), workflow_name: value.workspace.name, message_count: value.messages.length, ea_id: [...chats.keys()].indexOf(value.id), busy: value.busy, run: value.run ?? null };
   }
   const agentToken = randomUUID();
 

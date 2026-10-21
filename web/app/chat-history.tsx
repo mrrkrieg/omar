@@ -52,15 +52,18 @@ export function ChatHistory({ serveUrl, activeId, mobile, revision, collapsed, o
   const [retry, setRetry] = useState(0);
   const [sort, setSort] = useState<WorkflowSort>("recent");
   const names = useWorkflowNames(serveUrl);
+  const namesRef = useRef(names);
+  useEffect(() => { namesRef.current = names; }, [names]);
   const [editing, setEditing] = useState<string | null>(null);
   const [editedName, setEditedName] = useState("");
   const cancelRename = useRef(false);
-  const displayName = (chat: ConversationSummary) => names[chat.id]?.name ?? chat.title;
+  const migratedNames = useRef(new Set<string>());
+  const displayName = (chat: ConversationSummary) => chat.workflow_name ?? names[chat.id]?.name ?? chat.title;
   const updatedAt = (chat: ConversationSummary) => Math.max(chat.updated_at, names[chat.id]?.updatedAt ?? 0);
-  function saveName(id: string) {
+  async function saveName(id: string) {
     if (cancelRename.current) return;
-    try { saveWorkflowName(serveUrl, id, editedName); setEditing(null); setError(""); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : "Could not save the workflow name in this browser."); }
+    try { await saveWorkflowName(serveUrl, id, editedName); setEditing(null); setError(""); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : "Could not save the workflow name to this workspace."); }
   }
 
   // Only the narrow-screen drawer is modal. Desktop history stays beside the
@@ -84,6 +87,13 @@ export function ChatHistory({ serveUrl, activeId, mobile, revision, collapsed, o
       void fetchConversations(serveUrl, abort.signal).then((history) => {
         if (abort.signal.aborted) return;
         setChats(history.conversations);
+        for (const chat of history.conversations) {
+          const local = namesRef.current[chat.id];
+          if (local && !chat.workflow_name && !migratedNames.current.has(chat.id)) {
+            migratedNames.current.add(chat.id);
+            void saveWorkflowName(serveUrl, chat.id, local.name).catch(() => migratedNames.current.delete(chat.id));
+          }
+        }
         setError("");
         setLoading(false);
       }).catch((cause) => {
@@ -147,13 +157,13 @@ export function ChatHistory({ serveUrl, activeId, mobile, revision, collapsed, o
       {visible.map((chat) => (
         <li key={chat.id} className="workflow-row">
           <button type="button" disabled={switching} aria-current={chat.id === activeId ? "true" : undefined} aria-keyshortcuts="F2" onKeyDown={(event) => { if (event.key === "F2") { event.preventDefault(); cancelRename.current = false; setEditedName(displayName(chat)); setEditing(chat.id); } }} onClick={() => void select(chat.id)}>
-            <span className="workflow-name"><span className="workflow-title" title={`${displayName(chat)} · Double-click to rename (saved in this browser)`} onDoubleClick={(event) => { event.preventDefault(); event.stopPropagation(); cancelRename.current = false; setEditedName(displayName(chat)); setEditing(chat.id); }}>{displayName(chat)}</span>{chat.id === activeId ? <WorkflowIcon name="chevron" size={14} /> : null}</span>
+            <span className="workflow-name"><span className="workflow-title" title={`${displayName(chat)} · Double-click to rename (saved automatically)`} onDoubleClick={(event) => { event.preventDefault(); event.stopPropagation(); cancelRename.current = false; setEditedName(displayName(chat)); setEditing(chat.id); }}>{displayName(chat)}</span>{chat.id === activeId ? <WorkflowIcon name="chevron" size={14} /> : null}</span>
             <span className="workflow-description">{chat.run?.team ?? (chat.message_count ? `${chat.message_count} messages in this workflow` : "Describe what you want to automate")}</span>
             <span className="workflow-meta"><small className={`workflow-status status-${workflowStatus(chat).toLowerCase()}`}><i />{workflowStatus(chat)}</small><time dateTime={new Date(updatedAt(chat)).toISOString()}>{new Date(updatedAt(chat)).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</time>{chat.busy && chat.run ? <small>Thinking</small> : null}</span>
           </button>
-          {editing === chat.id ? <input className="workflow-rename" aria-label="Workflow name" maxLength={120} value={editedName} autoFocus onFocus={(event) => event.target.select()} onChange={(event) => setEditedName(event.target.value)} onBlur={() => saveName(chat.id)} onKeyDown={(event) => {
+          {editing === chat.id ? <input className="workflow-rename" aria-label="Workflow name" maxLength={120} value={editedName} autoFocus onFocus={(event) => event.target.select()} onChange={(event) => setEditedName(event.target.value)} onBlur={() => void saveName(chat.id)} onKeyDown={(event) => {
             if (event.key === "Escape") { event.preventDefault(); cancelRename.current = true; setEditing(null); }
-            if (event.key === "Enter") { event.preventDefault(); saveName(chat.id); }
+            if (event.key === "Enter") { event.preventDefault(); void saveName(chat.id); }
           }} /> : null}
         </li>
       ))}
