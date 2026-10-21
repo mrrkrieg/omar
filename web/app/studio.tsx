@@ -118,7 +118,11 @@ export function Studio({ serveUrl = "", designAgent }: StudioProps) {
     const abort = new AbortController();
     void fetchConversations(serveUrl, abort.signal).then((history) => {
       if (abort.signal.aborted) return;
-      setSelected(saved && history.conversations.some((chat) => chat.id === saved) ? saved : history.active_id);
+      const id = saved && history.conversations.some((chat) => chat.id === saved) ? saved : history.active_id;
+      setSelected(id);
+      // Pin the initial selection too: another tab can change the shared
+      // fallback before this tab has ever explicitly selected a workflow.
+      try { sessionStorage.setItem(`omar-chat:${serveUrl}`, id); } catch { /* Fall back to the server. */ }
       setRestoredUrl(serveUrl);
     }).catch(() => { if (!abort.signal.aborted) setRestoredUrl(serveUrl); });
     return () => abort.abort();
