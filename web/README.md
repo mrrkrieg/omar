@@ -161,13 +161,6 @@ npm run test:conformance
 It skips itself when those binaries are absent, so a Node-only checkout is
 unaffected. `OMAR_BIN` and `OMARC_BIN` override the paths.
 
-`tests/fixtures/diagram-snapshot.v1.json` was captured from a real `omar serve`
-run. `tests/protocol-contract.test.mjs` asserts the client's and renderer's
-requirements against it, so a runtime field rename fails here rather than
-silently. `tests/fake-serve.mjs` replays that snapshot over the real wire
-protocol, which is how the browser test runs without a model, a Lean toolchain,
-or tmux.
-
 ### Manual response panels
 
 Optional companion file `omar.response.json` provides human-facing copy for Web
@@ -195,3 +188,10 @@ marked `mode: setup_review_only` or `productionAuthorized: false`, with a wired
 `blocked` output, surface their setup requirements and only offer reporting a
 blocker. Providing new setup details requires editing the request; submitting a
 blocker is not authorization to produce or publish.
+
+`tests/fixtures/diagram-snapshot.v1.json` was captured from a real `omar serve`
+run. `tests/protocol-contract.test.mjs` asserts the client's and renderer's
+requirements against it, so a runtime field rename fails here rather than
+silently. `tests/fake-serve.mjs` replays that snapshot over the real wire
+protocol, which is how the browser test runs without a model, a Lean toolchain,
+or tmux.
