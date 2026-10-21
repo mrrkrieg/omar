@@ -53,6 +53,11 @@ export function ChatHistory({ serveUrl, activeId, mobile, revision, collapsed, o
   const [showArchive, setShowArchive] = useState(false);
   const [archivedChats, setArchivedChats] = useState<ConversationSummary[]>([]);
   const [lastArchived, setLastArchived] = useState<ConversationSummary | null>(null);
+  useEffect(() => {
+    if (!lastArchived) return;
+    const timeout = setTimeout(() => setLastArchived(null), 3000);
+    return () => clearTimeout(timeout);
+  }, [lastArchived]);
   const [deleteTarget, setDeleteTarget] = useState<ConversationSummary | null>(null);
   const [deleteError, setDeleteError] = useState("");
   const mutation = useRef(0);
