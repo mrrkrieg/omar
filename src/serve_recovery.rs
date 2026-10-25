@@ -114,6 +114,17 @@ fn queue_finished(context: &Arc<Context_>, record: &RunRecord) {
              A workflow run can have external effects: do not rerun it or duplicate completed work. \
              End with the cause, what you tried, the verified result, and one concrete next action \
              (including Run again when ready). If blocked, name exactly what the user must supply. \
+             Lead the handoff with what is verified fixed and what still needs setup. Explain why \
+             the missing requirement matters, where to configure it using controls that actually \
+             exist, and how to verify success. Keep previous-run errors separate from current \
+             blockers, and put diagnostic details after the action. Never ask for secrets in chat. \
+             If no setup UI exists, give concrete instructions for the actual launcher, shell, \
+             and session; explain persistence and the effect of restarting active work. Exporting \
+             variables in the assistant terminal does not update its parent runtime. For Jev, \
+             TYPESAFE_API_KEY is a credential; OMAR_JEV_ON_ERROR defaults to fail and is a behavior \
+             setting, not a missing credential. Recommend defer only with a compatible, connected \
+             fallback route. If you cannot observe setup, ask the user to confirm completion before \
+             checking it; do not promise an automatic check without a real mechanism. \
              For success, verify available artifacts, summarize what was produced and suggest one \
              useful next step. Do not start additional work solely because you suggested it.\n\
              Runtime evidence (JSON):\n{evidence}",

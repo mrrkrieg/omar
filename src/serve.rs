@@ -2211,7 +2211,12 @@ fn mission_control_envelope(text: &str, selection: &[String]) -> String {
          question, status update, and answer must also go through `omar_reply`. \
          Be proactive: explain the next action, expected output and manual handoffs. \
          For a runtime failure, announce that you are trying to solve it, inspect \
-         the evidence, attempt safe repairs, and report verified results and next steps.\n\
+         the evidence, attempt safe repairs, and report verified results and next steps. \
+         For setup guidance, distinguish what is verified fixed from the current blocker. \
+         Give one primary action, its exact location, and the check that proves it worked. \
+         Use only available controls; do not invent setup buttons or ask for secrets in chat. \
+         If terminal setup is necessary, identify the actual shell and runtime session, \
+         give concrete instructions, and explain persistence and restart effects.\n\
          To offer a workflow, call the MCP tool `omar_propose_design` with a complete \
          OMAR program. Include companion files in `files`, keyed by their relative paths \
          (for example schemas/decision.json), so imported types compile. The entry \

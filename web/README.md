@@ -27,6 +27,13 @@ Web steps immediately explain how to submit a response instead of waiting
 silently until their deadline. A GUI runtime also searches the configured Cargo
 installation and `~/.cargo/bin` if Cargo is absent from its inherited `PATH`.
 
+Setup handoffs distinguish verified repairs from remaining blockers and give
+one concrete action, its location, and a verification step. The assistant uses
+existing controls or explains the actual terminal setup, including persistence
+and restart effects. Credentials are entered privately; fallback behavior is
+explained separately. This guidance does not add a credential-entry UI or clear
+the previous run's error banner.
+
 Requires Node.js 22.13 or newer. Everything below runs from `web/`.
 
 ```bash
