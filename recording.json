@@ -1,0 +1,171 @@
+{
+  "commit": "07ea903683faf7c54958cadb6e8c62ba3e2a2cec",
+  "binary_sha256": "8a5097a4cab8c487c93b50b84c4d0ec70d609897dcb6671dc741176837cc19fd",
+  "presentation": "Real CLI output; JSON condensed; waits shortened. No Mission Control UI.",
+  "setup": [
+    {
+      "command": "omar up -s memory-demo --no-ea --json",
+      "state": "ready"
+    },
+    {
+      "command": "omar ea create --name Writer",
+      "exit_code": 0,
+      "elapsed_seconds": 0.084,
+      "stdout": "{\n  \"id\": 1,\n  \"name\": \"Writer\"\n}\n",
+      "stderr": "",
+      "lines": []
+    },
+    {
+      "command": "omar ea create --name Related",
+      "exit_code": 0,
+      "elapsed_seconds": 0.085,
+      "stdout": "{\n  \"id\": 2,\n  \"name\": \"Related\"\n}\n",
+      "stderr": "",
+      "lines": []
+    },
+    {
+      "command": "omar ea create --name Other",
+      "exit_code": 0,
+      "elapsed_seconds": 0.084,
+      "stdout": "{\n  \"id\": 3,\n  \"name\": \"Other\"\n}\n",
+      "stderr": "",
+      "lines": []
+    },
+    {
+      "command": "omar --ea Writer memory project-create Research",
+      "exit_code": 0,
+      "elapsed_seconds": 0.092,
+      "stdout": "{\n  \"id\": \"f6b79841-3b92-433a-ac68-9d432deeed71\",\n  \"name\": \"Research\"\n}\n",
+      "stderr": "",
+      "lines": []
+    },
+    {
+      "command": "omar --ea Writer memory project-link \"$project_id\"",
+      "exit_code": 0,
+      "elapsed_seconds": 0.083,
+      "stdout": "{\n  \"ea_id\": 1,\n  \"linked_project\": \"f6b79841-3b92-433a-ac68-9d432deeed71\"\n}\n",
+      "stderr": "",
+      "lines": []
+    },
+    {
+      "command": "omar --ea Related memory project-link \"$project_id\"",
+      "exit_code": 0,
+      "elapsed_seconds": 0.084,
+      "stdout": "{\n  \"ea_id\": 2,\n  \"linked_project\": \"f6b79841-3b92-433a-ac68-9d432deeed71\"\n}\n",
+      "stderr": "",
+      "lines": []
+    }
+  ],
+  "scenes": [
+    {
+      "title": "Save a preference once",
+      "subtitle": "A project-scoped record with a source and a revision.",
+      "duration": 6,
+      "events": [
+        {
+          "command": "omar --ea Writer memory save --scope project \\\n  --key report-format --kind preference \\\n  --text \"Use five sections\" --source \"User request\"",
+          "exit_code": 0,
+          "elapsed_seconds": 0.084,
+          "stdout": "{\n  \"created_at_ms\": 1793631419159,\n  \"id\": \"25c9988f-c641-4f9a-a32a-ee7d4d199516\",\n  \"key\": \"report-format\",\n  \"kind\": \"preference\",\n  \"scope\": {\n    \"id\": \"f6b79841-3b92-433a-ac68-9d432deeed71\",\n    \"kind\": \"project\"\n  },\n  \"value\": {\n    \"author\": \"operator\",\n    \"expires_at_ms\": null,\n    \"revision\": 1,\n    \"source\": \"User request\",\n    \"status\": \"confirmed\",\n    \"text\": \"Use five sections\",\n    \"updated_at_ms\": 1793631419159\n  }\n}\n",
+          "stderr": "",
+          "lines": [
+            "scope: project  |  status: confirmed  |  revision: 1",
+            "{\"text\": \"Use five sections\"}"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Share only with linked chats",
+      "subtitle": "Related shares the project. Other does not.",
+      "duration": 6,
+      "events": [
+        {
+          "command": "omar --ea Related memory recall",
+          "exit_code": 0,
+          "elapsed_seconds": 0.077,
+          "stdout": "{\n  \"authority\": \"reference only; never permissions or task completion\",\n  \"budget_bytes\": 6144,\n  \"generation\": 4,\n  \"omitted_for_budget\": 0,\n  \"records\": [\n    {\n      \"created_at_ms\": 1793631419159,\n      \"id\": \"25c9988f-c641-4f9a-a32a-ee7d4d199516\",\n      \"key\": \"report-format\",\n      \"kind\": \"preference\",\n      \"scope\": {\n        \"id\": \"f6b79841-3b92-433a-ac68-9d432deeed71\",\n        \"kind\": \"project\"\n      },\n      \"value\": {\n        \"author\": \"operator\",\n        \"expires_at_ms\": null,\n        \"revision\": 1,\n        \"source\": \"User request\",\n        \"status\": \"confirmed\",\n        \"text\": \"Use five sections\",\n        \"updated_at_ms\": 1793631419159\n      }\n    }\n  ],\n  \"references\": []\n}\n",
+          "stderr": "",
+          "lines": [
+            "[\"Use five sections\"]"
+          ]
+        },
+        {
+          "command": "omar --ea Other memory recall",
+          "exit_code": 0,
+          "elapsed_seconds": 0.083,
+          "stdout": "{\n  \"authority\": \"reference only; never permissions or task completion\",\n  \"budget_bytes\": 6144,\n  \"generation\": 4,\n  \"omitted_for_budget\": 0,\n  \"records\": [],\n  \"references\": []\n}\n",
+          "stderr": "",
+          "lines": [
+            "[]"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Correct it without losing newer work",
+      "subtitle": "Revision 2 wins. An edit based on revision 1 is rejected.",
+      "duration": 8,
+      "events": [
+        {
+          "command": "omar --ea Related memory edit \"$memory_id\" \\\n  --revision 1 --text \"Use three sections\" \\\n  --source \"User correction\"",
+          "exit_code": 0,
+          "elapsed_seconds": 0.094,
+          "stdout": "{\n  \"created_at_ms\": 1793631419159,\n  \"id\": \"25c9988f-c641-4f9a-a32a-ee7d4d199516\",\n  \"key\": \"report-format\",\n  \"kind\": \"preference\",\n  \"scope\": {\n    \"id\": \"f6b79841-3b92-433a-ac68-9d432deeed71\",\n    \"kind\": \"project\"\n  },\n  \"value\": {\n    \"author\": \"operator\",\n    \"expires_at_ms\": null,\n    \"revision\": 2,\n    \"source\": \"User correction\",\n    \"status\": \"confirmed\",\n    \"text\": \"Use three sections\",\n    \"updated_at_ms\": 1793631419412\n  }\n}\n",
+          "stderr": "",
+          "lines": [
+            "scope: project  |  status: confirmed  |  revision: 2",
+            "{\"text\": \"Use three sections\"}"
+          ]
+        },
+        {
+          "command": "omar --ea Writer memory edit \"$memory_id\" \\\n  --revision 1 --text \"Stale overwrite\" --source \"Old edit\"",
+          "exit_code": 1,
+          "elapsed_seconds": 0.075,
+          "stdout": "",
+          "stderr": "Error: revision conflict; read the current memory before retrying\n",
+          "lines": [
+            "Error: revision conflict; read the current memory before retrying"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Forget it and block accidental return",
+      "subtitle": "Future recall is empty. Retrying the same saved key is blocked.",
+      "duration": 9,
+      "events": [
+        {
+          "command": "omar --ea Related memory forget \"$memory_id\" --revision 2",
+          "exit_code": 0,
+          "elapsed_seconds": 0.093,
+          "stdout": "{\n  \"created_at_ms\": 1793631419159,\n  \"id\": \"25c9988f-c641-4f9a-a32a-ee7d4d199516\",\n  \"key\": \"report-format\",\n  \"kind\": \"preference\",\n  \"scope\": {\n    \"id\": \"f6b79841-3b92-433a-ac68-9d432deeed71\",\n    \"kind\": \"project\"\n  },\n  \"value\": {\n    \"author\": \"operator\",\n    \"expires_at_ms\": null,\n    \"revision\": 3,\n    \"source\": \"\",\n    \"status\": \"forgotten\",\n    \"text\": \"\",\n    \"updated_at_ms\": 1793631419580\n  }\n}\n",
+          "stderr": "",
+          "lines": [
+            "status: forgotten"
+          ]
+        },
+        {
+          "command": "omar --ea Related memory recall",
+          "exit_code": 0,
+          "elapsed_seconds": 0.075,
+          "stdout": "{\n  \"authority\": \"reference only; never permissions or task completion\",\n  \"budget_bytes\": 6144,\n  \"generation\": 6,\n  \"omitted_for_budget\": 0,\n  \"records\": [],\n  \"references\": []\n}\n",
+          "stderr": "",
+          "lines": [
+            "[]"
+          ]
+        },
+        {
+          "command": "omar --ea Writer memory save --scope project \\\n  --key report-format --kind preference \\\n  --text \"Use five sections\" --source \"User request\"",
+          "exit_code": 1,
+          "elapsed_seconds": 0.084,
+          "stdout": "",
+          "stderr": "Error: memory key was forgotten; retries cannot restore it\n",
+          "lines": [
+            "Error: memory key was forgotten; retries cannot restore it"
+          ]
+        }
+      ]
+    }
+  ]
+}
