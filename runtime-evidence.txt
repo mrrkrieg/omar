@@ -1,0 +1,8 @@
+PR #324 — recorded at 780d1e8fe8f970d8818d470823d69fbf57cece11
+Real omar runtime, omarc and Codex; disposable OMAR_HOME.
+Selected actual runtime log lines:
+OMAR: **ReleaseReport stopped.** A Rust step did not compile. Inspect the compiler diagnostic, repair that step, and compile it again before rerunning. OMAR will investigate automatically when the assistant is available.
+OMAR: Trying to solve the missing Cargo problem using /Users/dimakriger/.cargo/bin/cargo.
+OMAR: **ReleaseReport stopped.** A Rust step did not compile. Inspect the compiler diagnostic, repair that step, and compile it again before rerunning. OMAR will investigate automatically when the assistant is available.
+OMAR: **ManualReview finished.** OMAR will check its recorded outputs, summarize the result in chat, and suggest the next useful step.
+OMAR: Trying to solve the missing Cargo problem using /Users/dimakriger/.cargo/bin/cargo.
