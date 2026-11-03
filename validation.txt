@@ -1,0 +1,32 @@
+Workflow design implementation review — 2026-11-02
+Code commit: 5944638
+Isolated from the shared checkout; concurrent integration work excluded.
+
+Fresh validation on the isolated tree:
+- Lean compiler build: PASS.
+- Rust workflow filter: 64 passed.
+- Generated protocol: 6 passed.
+- MCP tests: 39 passed.
+- Manager tests: 31 passed, 1 ignored helper.
+- Codex tests: 19 passed.
+- Native runner protocol: 4 passed.
+- Runtime recovery: 9 passed.
+- Python evaluation tooling: 26 passed, 3 opt-in Docker tests skipped.
+- Frontend rendering/contract/source/profile tests: 26 passed.
+- Workflow Playwright browser journeys: 6 passed.
+- Production and standalone SPA builds: PASS.
+- Standalone TypeScript: only existing worker Fetcher/D1Database globals fail.
+Counts overlap; do not sum as independent coverage.
+
+UI recording checks:
+OMAR Mission Control at http://127.0.0.1:3100.
+Production frontend, scripted daemon/model data on local port 7399.
+Page identity, meaningful content, no framework overlay, no console/page errors,
+saved answer after reload, changed model saved, result receipt inspected: PASS.
+Desktop 1440x1000; mobile 390x844 without horizontal overflow.
+No live model or external service calls were made to produce this evidence.
+The GIF is not real-assistant qualification or proof of superior task quality.
+
+Draft review status:
+The source snapshot is based on 51545c7. Integration with current upstream and
+real-system evidence required by CONTRIBUTING.md remain release work.

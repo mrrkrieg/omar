@@ -1,0 +1,55 @@
+{
+  "kind": "scripted UI fixture; no live model calls",
+  "identity": {
+    "url": "http://127.0.0.1:3100/",
+    "title": "OMAR Mission Control"
+  },
+  "frames": [
+    {
+      "name": "01-review",
+      "caption": "1. Review the proposed outcome, assumptions, and questions"
+    },
+    {
+      "name": "02-answer",
+      "caption": "2. Save your answer; it stays attached to this revision"
+    },
+    {
+      "name": "03-redesign",
+      "caption": "3. Update the workflow from the saved answer"
+    },
+    {
+      "name": "04-model",
+      "caption": "4. Inspect a step and save an explicit model choice"
+    },
+    {
+      "name": "05-evidence",
+      "caption": "5. See selection evidence and its qualification status"
+    },
+    {
+      "name": "06-confirm",
+      "caption": "6. Confirm the saved workflow before execution"
+    },
+    {
+      "name": "07-receipt",
+      "caption": "7. Inspect the run receipt and the model settings used"
+    },
+    {
+      "name": "08-checks",
+      "caption": "8. Read the recorded checks and their limits"
+    }
+  ],
+  "errors": [],
+  "mobileOverflow": false,
+  "commit": "5944638",
+  "duration_seconds": 21.5,
+  "recording": "Continuous Chromium recording, trimmed after final desktop state; captions sit below the app.",
+  "recorded_viewport": {
+    "width": 1440,
+    "height": 1000
+  },
+  "mobile_viewport": {
+    "width": 390,
+    "height": 844
+  },
+  "gif_sha256": "cbe5881b2bf43b6795b50a1fcb606cec1fc8a2188ae030ab21dd97ae2ad01765"
+}
