@@ -1,0 +1,27 @@
+Source commit: 1f5cb4b4331a74b65e0ac36d2cf677af65dc35da
+Base: 3a468820f43a09fba0be201066b3fdf0352e082a
+Diff: 23 files, 1,358 additions, 26 deletions. No new dependencies or Markdown documents.
+
+Local validation:
+- Production frontend build: PASS
+- Frontend lint: PASS
+- Frontend contract/render/source tests: 32 PASS
+- Existing flow/schema/read-only browser journeys: 92 PASS
+- Focused planning browser journey: 1 PASS
+- Real OMAR runtime and compiler review recording: saved answer persisted after reload,
+  revised proposal accepted, model override saved, deployment confirmation available;
+  scripted assistant proposals, no model calls, no workflow execution.
+- Desktop 1440x1000 and mobile 390x844: no page errors, no horizontal overflow.
+- Rust formatting and Clippy --all-targets -D warnings: PASS
+- 588 distinct Rust binary tests passed across the final suite and compiler-fixture rerun.
+  Eight compiler fixtures initially inherited CARGO_TARGET_DIR and looked in the wrong
+  directory for their generated binaries; all 13 compiler-backed tests passed when
+  --target-dir was used instead. Lean was put on PATH for property proof tests.
+- One terminal test is excluded from that passing count:
+  serve::tests::a_view_terminal_shows_the_screen_but_takes_no_keystrokes_or_resizes.
+  It also fails on a clean checkout of main 3a46882 on this macOS host. It was not changed.
+- Three Python document smoke-comparison tests: PASS.
+
+No live-model quality, lower-cost routing, provider identity, or advantage over a
+single agent has been established by these checks. Three authored document cases
+are smoke examples, not a qualified or statistically meaningful benchmark.

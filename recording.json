@@ -1,0 +1,12 @@
+{
+  "source_commit": "1f5cb4b4331a74b65e0ac36d2cf677af65dc35da",
+  "real_runtime": true,
+  "real_compiler": true,
+  "assistant": "scripted HTTP proposals; no provider launched",
+  "model_calls": 0,
+  "saved_answer_reloaded": true,
+  "review_and_confirmation": true,
+  "errors": [],
+  "mobile_horizontal_overflow": false,
+  "recording": "Continuous browser recording; real runtime and compiler, scripted proposal callbacks; no live assistant or model execution."
+}
