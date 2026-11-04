@@ -1,0 +1,13 @@
+{
+  "commit": "5f6e3a63c4fcb0ae1c91ceab8f46688da8c98c69",
+  "backend": "Codex GPT-6.1 Sol high",
+  "data": "Bundled fictional questionnaire sample",
+  "consoleErrors": [],
+  "waitStart": 17.706,
+  "waitEnd": 74.772,
+  "download": 81.705,
+  "end": 88.093,
+  "title": "OMAR Mission Control",
+  "wait_speed": 8,
+  "recording": "Real OMAR runtime, Lean compiler, and native Codex workers; Playwright browser capture."
+}
