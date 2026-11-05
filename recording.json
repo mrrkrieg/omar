@@ -1,0 +1,51 @@
+{
+  "commit": "c2980823dcca1864670e2c3048a47f0d4b9d6f30",
+  "url": "http://127.0.0.1:7372",
+  "viewport": "1440x960",
+  "real_runtime": true,
+  "real_compiler": true,
+  "real_assistant": "Codex generated the draft before recording",
+  "workflow_runs_started": 0,
+  "draft_and_transcript_survived_restart": true,
+  "archive_undo": true,
+  "archive_restore_preserved_draft": true,
+  "cancel_preserved_workflow": true,
+  "confirmed_deletion_survived_reload": true,
+  "mobile_horizontal_overflow": false,
+  "errors": [],
+  "consoleErrors": [
+    {
+      "text": "Failed to load resource: net::ERR_CONNECTION_REFUSED",
+      "duringRestart": true
+    }
+  ],
+  "chapters": [
+    {
+      "time": 1.054,
+      "text": "1 / 5   Name the workflow and save your edits"
+    },
+    {
+      "time": 6.128,
+      "text": "2 / 5   Restart OMAR \u2014 the draft and conversation return"
+    },
+    {
+      "time": 16.066,
+      "text": "3 / 5   Archive a workflow \u2014 Undo brings it straight back"
+    },
+    {
+      "time": 19.169,
+      "text": "4 / 5   Restore from Archive with the saved draft intact"
+    },
+    {
+      "time": 24.666,
+      "text": "5 / 5   Permanent deletion is separate and requires confirmation"
+    }
+  ],
+  "duration_seconds": 26.91,
+  "speed": 1.2,
+  "frame_rate": 12,
+  "dimensions": "1152x852",
+  "recording": "Actual browser interactions; captions below the application. A real Codex assistant prepared the draft. No workflow execution is depicted.",
+  "notes": "Expected connection errors during the deliberate runtime restart are recorded separately. The source-pane collapse action was omitted after its click target was obscured by the diagram; the save/archive/delete flows pass.",
+  "gif_bytes": 7923524
+}
